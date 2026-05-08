@@ -1,17 +1,18 @@
-import { auth } from "@/lib/auth"
+import NextAuth from "next-auth"
+import { authConfig } from "@/lib/auth.config"
 import { NextResponse } from "next/server"
+
+const { auth } = NextAuth(authConfig)
 
 const PUBLIC_ROUTES = [
   "/", "/pricing", "/login", "/signup", "/invite",
   "/api/auth", "/api/billing/webhook",
 ]
 
-const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || process.env.AUTH_URL || ""
-
 export default auth((req) => {
   const { pathname } = req.nextUrl
   const session = req.auth
-  const baseUrl = BASE_URL || req.nextUrl.origin
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || req.nextUrl.origin
 
   if (pathname.startsWith("/platform")) {
     if (!session?.user || session.user.role !== "SUPER_ADMIN") {
