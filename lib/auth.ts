@@ -6,6 +6,7 @@ import { compare } from "bcryptjs"
 import type { Role } from "@prisma/client"
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
+  trustHost: true,
   adapter: PrismaAdapter(unscopedPrisma),
   session: { strategy: "jwt" },
   providers: [
