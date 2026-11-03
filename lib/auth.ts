@@ -18,23 +18,31 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         orgSlug: { label: "Workspace", type: "text" },
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password || !credentials?.orgSlug) {
+        try {
+          if (!credentials?.email || !credentials?.password || !credentials?.orgSlug) {
+            return null
+          }
+          const org = await unscopedPrisma.organization.findUnique({
+            where: { slug: credentials.orgSlug as string },
+          })
+          console.log("AUTH: org lookup:", org?.id ?? "NOT FOUND")
+          if (!org) return null
+
+          const user = await unscopedPrisma.user.findFirst({
+            where: { orgId: org.id, email: credentials.email as string },
+          })
+          console.log("AUTH: user lookup:", user?.id ?? "NOT FOUND")
+          if (!user?.passwordHash) return null
+
+          const valid = await compare(credentials.password as string, user.passwordHash)
+          console.log("AUTH: password valid:", valid)
+          if (!valid) return null
+
+          return user
+        } catch (error) {
+          console.error("AUTH ERROR:", error)
           return null
         }
-        const org = await unscopedPrisma.organization.findUnique({
-          where: { slug: credentials.orgSlug as string },
-        })
-        if (!org) return null
-
-        const user = await unscopedPrisma.user.findFirst({
-          where: { orgId: org.id, email: credentials.email as string },
-        })
-        if (!user?.passwordHash) return null
-
-        const valid = await compare(credentials.password as string, user.passwordHash)
-        if (!valid) return null
-
-        return user
       },
     }),
   ],
@@ -72,6 +80,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         if (existingUser) return false
       }
       return true
+    },
+    async redirect({ url, baseUrl }) {
+      const base = process.env.NEXTAUTH_URL || process.env.AUTH_URL || baseUrl
+      if (url.startsWith("/")) return `${base}${url}`
+      if (url.startsWith(base)) return url
+      return base
     },
   },
   pages: {
