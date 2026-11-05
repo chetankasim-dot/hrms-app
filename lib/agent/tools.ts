@@ -70,12 +70,30 @@ export const AGENT_TOOLS: AgentTool[] = [
       required: [],
     },
   },
+  {
+    name: "get_leave_schedule",
+    description: "Get who is on approved leave on a date or within a date range. Use for 'who is on leave today', 'how many are on leave', 'who is off this week', 'who in my team is on leave'. Omit from/to for today. Use scope 'my_team' when the user says 'my team' or 'my reports'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        from: { type: "string", description: "Start date, YYYY-MM-DD. Defaults to today." },
+        to: { type: "string", description: "End date, YYYY-MM-DD. Defaults to the start date." },
+        scope: {
+          type: "string",
+          enum: ["all", "my_team"],
+          description: "'my_team' limits results to the current user's direct reports. Default 'all'.",
+        },
+      },
+      required: [],
+    },
+  },
 ]
 
 export async function executeTool(
   toolName: string,
   input: Record<string, unknown>,
-  orgId: string
+  orgId: string,
+  viewerUserId?: string
 ): Promise<unknown> {
   switch (toolName) {
 
@@ -267,6 +285,74 @@ export async function executeTool(
           allocated: b.allocated,
           used: b.used,
           remaining: b.allocated + b.carried - b.used,
+        })),
+      }
+    }
+
+    case "get_leave_schedule": {
+      const { from, to, scope = "all" } = input as {
+        from?: string
+        to?: string
+        scope?: string
+      }
+
+      const now = new Date()
+      const todayUTC = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()))
+      const parse = (s?: string) => {
+        if (!s) return null
+        const d = new Date(`${s}T00:00:00Z`)
+        return isNaN(d.getTime()) ? null : d
+      }
+      const start = parse(from) ?? todayUTC
+      const end = parse(to) ?? start
+      if (end < start) return { error: "'to' date must not be before 'from' date" }
+
+      const employeeFilter: { managerId?: string } = {}
+      if (scope === "my_team") {
+        if (!viewerUserId) return { error: "Cannot tell who the current user is" }
+        const me = await unscopedPrisma.employee.findFirst({
+          where: { userId: viewerUserId, orgId },
+          select: { id: true },
+        })
+        if (!me) return { error: "The current user has no employee record, so no team was found" }
+        employeeFilter.managerId = me.id
+      }
+
+      const requests = await unscopedPrisma.leaveRequest.findMany({
+        where: {
+          orgId,
+          status: { in: ["APPROVED", "AUTO_APPROVED"] },
+          fromDate: { lte: end },
+          toDate: { gte: start },
+          employee: employeeFilter,
+        },
+        include: {
+          employee: {
+            select: {
+              firstName: true,
+              lastName: true,
+              department: { select: { name: true } },
+            },
+          },
+          leaveType: { select: { name: true } },
+        },
+        orderBy: { fromDate: "asc" },
+        take: 100,
+      })
+
+      const fmtUTC = (d: Date) => d.toISOString().slice(0, 10).split("-").reverse().join("/")
+      return {
+        from: fmtUTC(start),
+        to: fmtUTC(end),
+        scope,
+        employeesOnLeave: new Set(requests.map((r) => r.employeeId)).size,
+        leaves: requests.map((r) => ({
+          name: `${r.employee.firstName} ${r.employee.lastName}`.trim(),
+          department: r.employee.department?.name ?? null,
+          leaveType: r.leaveType.name,
+          fromDate: fmtUTC(r.fromDate),
+          toDate: fmtUTC(r.toDate),
+          days: r.days,
         })),
       }
     }

@@ -42,7 +42,8 @@ export async function POST(req: Request) {
           message,
           org.id,
           org.name,
-          history
+          history,
+          session.user.id
         )) {
           send(event)
         }

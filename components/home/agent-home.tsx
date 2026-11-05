@@ -30,6 +30,7 @@ const TOOL_LABELS: Record<string, string> = {
   get_departments: "Loading departments",
   get_recent_joiners: "Finding recent joiners",
   get_leave_balances: "Checking leave balances",
+    get_leave_schedule: "Checking leave schedule",
 }
 
 export function AgentHome({ orgName, orgSlug, orgId, userName, greeting, firstName }: Props) {
