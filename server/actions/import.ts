@@ -1,9 +1,14 @@
 "use server"
 
-import { auth } from "@/lib/auth"
 import { unscopedPrisma } from "@/lib/prisma"
+import { requireActor } from "@/lib/access"
 import { revalidatePath } from "next/cache"
-import { hash } from "bcryptjs"
+import type { Role } from "@prisma/client"
+
+const ADMIN_ROLES: Role[] = ["SUPER_ADMIN", "HR_ADMIN", "HR_MANAGER"]
+const MAX_ROWS = 500
+const MAX_CSV_CHARS = 5_000_000
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export type ColumnMapping = {
   csvColumn: string
@@ -27,6 +32,7 @@ export async function parseCSVContent(csvText: string): Promise<{
   headers: string[]
   rows: Record<string, string>[]
 }> {
+  if (typeof csvText !== "string" || csvText.length > MAX_CSV_CHARS) return { headers: [], rows: [] }
   const lines = csvText.split(/\r?\n/).filter((l) => l.trim())
   if (lines.length < 2) return { headers: [], rows: [] }
 
@@ -50,7 +56,7 @@ export async function parseCSVContent(csvText: string): Promise<{
   }
 
   const headers = parseRow(lines[0])
-  const rows = lines.slice(1).map((line) => {
+  const rows = lines.slice(1, MAX_ROWS + 1).map((line) => {
     const values = parseRow(line)
     const row: Record<string, string> = {}
     headers.forEach((h, i) => { row[h] = values[i] ?? "" })
@@ -101,36 +107,48 @@ export async function detectHRMSSystem(headers: string[]): Promise<string> {
   return "generic"
 }
 
+function mapRow(rawRow: Record<string, string>, mappings: ColumnMapping[]) {
+  const mapped: Record<string, string> = {}
+  for (const m of mappings) {
+    if (m.hrmsField && rawRow[m.csvColumn] !== undefined) {
+      mapped[m.hrmsField] = String(rawRow[m.csvColumn] ?? "").trim()
+    }
+  }
+  if (mapped.fullName && !mapped.firstName) {
+    const parts = mapped.fullName.trim().split(/\s+/)
+    mapped.firstName = parts[0] ?? ""
+    mapped.lastName = parts.slice(1).join(" ")
+  }
+  if (mapped.email) mapped.email = mapped.email.toLowerCase()
+  return mapped
+}
+
+// orgId is accepted so the existing import page keeps compiling, but it is ignored.
+// The workspace always comes from the signed-in user.
 export async function previewImport(
   rows: Record<string, string>[],
   mappings: ColumnMapping[],
-  orgId: string
+  _orgId?: string
 ): Promise<ImportPreviewResult> {
-  const session = await auth()
-  if (!session?.user) throw new Error("Unauthorized")
+  const actor = await requireActor(undefined, ADMIN_ROLES)
+  if (!Array.isArray(rows) || rows.length > MAX_ROWS)
+    throw new Error(`Maximum ${MAX_ROWS} rows per import`)
 
   const validMappings = mappings.filter((m) => m.hrmsField)
   const existingEmails = new Set(
-    (await unscopedPrisma.user.findMany({ where: { orgId }, select: { email: true } }))
+    (await unscopedPrisma.user.findMany({ where: { orgId: actor.orgId }, select: { email: true } }))
       .map((u) => u.email.toLowerCase())
   )
 
+  const seen = new Set<string>()
   const results = rows.map((rawRow) => {
-    const mapped: Record<string, string> = {}
-    for (const m of validMappings) {
-      if (m.hrmsField && rawRow[m.csvColumn] !== undefined) {
-        mapped[m.hrmsField] = rawRow[m.csvColumn]?.trim()
-      }
-    }
-    if (mapped.fullName && !mapped.firstName) {
-      const parts = mapped.fullName.trim().split(/\s+/)
-      mapped.firstName = parts[0] ?? ""
-      mapped.lastName = parts.slice(1).join(" ")
-    }
+    const mapped = mapRow(rawRow, validMappings)
     const errors: string[] = []
     if (!mapped.email) errors.push("Email required")
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mapped.email)) errors.push("Invalid email")
-    else if (existingEmails.has(mapped.email.toLowerCase())) errors.push("Already exists")
+    else if (!EMAIL_RE.test(mapped.email)) errors.push("Invalid email")
+    else if (existingEmails.has(mapped.email)) errors.push("Already exists")
+    else if (seen.has(mapped.email)) errors.push("Appears twice in this file")
+    if (mapped.email) seen.add(mapped.email)
     if (!mapped.firstName && !mapped.fullName) errors.push("Name required")
     return { row: rawRow, mapped, errors }
   })
@@ -146,41 +164,39 @@ export async function previewImport(
 export async function executeImport(
   rows: Record<string, string>[],
   mappings: ColumnMapping[],
-  orgId: string
+  _orgId?: string
 ): Promise<ImportResult> {
-  const session = await auth()
-  if (!session?.user) throw new Error("Unauthorized")
+  const actor = await requireActor(undefined, ADMIN_ROLES)
+  const orgId = actor.orgId
+  if (!Array.isArray(rows) || rows.length > MAX_ROWS)
+    throw new Error(`Maximum ${MAX_ROWS} rows per import`)
 
   const validMappings = mappings.filter((m) => m.hrmsField)
   let imported = 0
   let skipped = 0
   const errors: string[] = []
 
-  const departments = await unscopedPrisma.department.findMany({ where: { orgId } })
+  const [departments, existingUsers, existingEmployees, leaveTypes] = await Promise.all([
+    unscopedPrisma.department.findMany({ where: { orgId } }),
+    unscopedPrisma.user.findMany({ where: { orgId }, select: { email: true } }),
+    unscopedPrisma.employee.findMany({ where: { orgId }, select: { employeeCode: true } }),
+    unscopedPrisma.leaveType.findMany({ where: { orgId } }),
+  ])
+
   const deptMap = new Map(departments.map((d) => [d.name.toLowerCase(), d.id]))
-  const existingCount = await unscopedPrisma.employee.count({ where: { orgId } })
-  let codeCounter = existingCount + 1
+  const usedEmails = new Set(existingUsers.map((u) => u.email.toLowerCase()))
+  const usedCodes = new Set(existingEmployees.map((e) => e.employeeCode))
+  let codeCounter =
+    existingEmployees.reduce((max, e) => {
+      const m = /^EMP(\d+)$/.exec(e.employeeCode)
+      return m ? Math.max(max, parseInt(m[1], 10)) : max
+    }, 0) + 1
 
   for (const rawRow of rows) {
-    const mapped: Record<string, string> = {}
-    for (const m of validMappings) {
-      if (m.hrmsField && rawRow[m.csvColumn] !== undefined) {
-        mapped[m.hrmsField] = rawRow[m.csvColumn]?.trim()
-      }
-    }
+    const mapped = mapRow(rawRow, validMappings)
 
-    if (mapped.fullName && !mapped.firstName) {
-      const parts = mapped.fullName.trim().split(/\s+/)
-      mapped.firstName = parts[0] ?? ""
-      mapped.lastName = parts.slice(1).join(" ")
-    }
-
-    if (!mapped.email) { skipped++; continue }
-
-    const exists = await unscopedPrisma.user.findFirst({
-      where: { orgId, email: mapped.email.toLowerCase() },
-    })
-    if (exists) { skipped++; continue }
+    if (!mapped.email || !EMAIL_RE.test(mapped.email)) { skipped++; continue }
+    if (usedEmails.has(mapped.email)) { skipped++; continue }
 
     try {
       let departmentId: string | undefined
@@ -191,10 +207,9 @@ export async function executeImport(
             data: {
               orgId,
               name: mapped.department,
-              code: mapped.department
-                .toUpperCase()
-                .replace(/[^A-Z0-9]/g, "")
-                .slice(0, 6) || "DEPT",
+              code:
+                (mapped.department.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "DEPT") +
+                String(deptMap.size + 1),
             },
           })
           deptMap.set(mapped.department.toLowerCase(), newDept.id)
@@ -203,22 +218,23 @@ export async function executeImport(
         departmentId = deptId
       }
 
-      const tempPassword = `HRMS@${new Date().getFullYear()}`
-      const passwordHash = await hash(tempPassword, 10)
-      const empCode = mapped.employeeCode || `EMP${String(codeCounter).padStart(4, "0")}`
+      let empCode = mapped.employeeCode
+      if (!empCode || usedCodes.has(empCode)) {
+        while (usedCodes.has(`EMP${String(codeCounter).padStart(4, "0")}`)) codeCounter++
+        empCode = `EMP${String(codeCounter).padStart(4, "0")}`
+      }
       const firstName = mapped.firstName || mapped.email.split("@")[0]
       const lastName = mapped.lastName || ""
 
       await unscopedPrisma.$transaction(async (tx) => {
+        // No password and no verified email: the person sets a password through an invite.
         const user = await tx.user.create({
           data: {
             orgId,
-            email: mapped.email.toLowerCase(),
+            email: mapped.email,
             name: `${firstName} ${lastName}`.trim(),
             role: "EMPLOYEE",
             isActive: true,
-            emailVerified: new Date(),
-            passwordHash,
           },
         })
 
@@ -239,7 +255,6 @@ export async function executeImport(
           },
         })
 
-        const leaveTypes = await tx.leaveType.findMany({ where: { orgId } })
         if (leaveTypes.length > 0) {
           await tx.leaveBalance.createMany({
             data: leaveTypes.map((lt) => ({
@@ -254,15 +269,16 @@ export async function executeImport(
         }
       })
 
+      usedEmails.add(mapped.email)
+      usedCodes.add(empCode)
       imported++
-      codeCounter++
-    } catch (err) {
-      errors.push(`${mapped.email}: ${err instanceof Error ? err.message : "Failed"}`)
+    } catch {
+      errors.push(`${mapped.email}: could not be imported`)
       skipped++
     }
   }
 
-  revalidatePath(`/people`)
+  revalidatePath(`/${actor.orgSlug}/people`, "layout")
   return { imported, skipped, errors }
 }
 
@@ -279,7 +295,7 @@ function parseGreytHRDate(value: string): Date | null {
     let year = parseInt(match[3])
     if (year < 100) year += year < 50 ? 2000 : 1900
     if (month !== undefined) {
-      const d = new Date(year, month, day)
+      const d = new Date(Date.UTC(year, month, day))
       if (!isNaN(d.getTime())) return d
     }
   }
