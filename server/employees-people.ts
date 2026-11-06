@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma"
 import type { Prisma } from "@prisma/client"
+import { requireActor } from "@/lib/access"
+import type { Role } from "@prisma/client"
 
 export type Viewer = { userId?: string | null; orgId?: string | null }
 export type LiveStatus = "office" | "wfh" | "leave" | "pending" | "exited"
@@ -22,10 +24,10 @@ const fmtDay = (d: Date) =>
 const fullName = (e: { firstName: string; lastName: string; displayName: string | null }) =>
   e.displayName ?? `${e.firstName} ${e.lastName}`.trim()
 
-async function requireOrg(orgSlug: string, viewer: Viewer) {
-  const org = await prisma.organization.findUnique({ where: { slug: orgSlug } })
-  // The URL slug must match the logged-in user's org
-  if (!org || org.id !== viewer.orgId) throw new Error("Not found")
+async function requireOrg(orgSlug: string, _viewer?: Viewer, roles?: Role[]) {
+  const actor = await requireActor(orgSlug, roles)
+  const org = await prisma.organization.findUnique({ where: { id: actor.orgId } })
+  if (!org) throw new Error("Not found")
   return org
 }
 
@@ -196,7 +198,7 @@ export type ApprovalRow = {
 }
 
 export async function getApprovalRows(orgSlug: string, viewer: Viewer, type?: string) {
-  const org = await requireOrg(orgSlug, viewer)
+    const org = await requireOrg(orgSlug, viewer, ["SUPER_ADMIN", "HR_ADMIN", "HR_MANAGER", "MANAGER"])
   const today = todayUTC()
   const year = today.getUTCFullYear()
 
@@ -288,12 +290,12 @@ function tenure(from: Date | null, to: Date | null) {
   return `${Math.floor(months / 12)} yr`
 }
 
-export async function getTeamReport(
+export async function getTeamReport(    
   orgSlug: string,
   viewer: Viewer,
   f: { department?: string; location?: string }
 ) {
-  const org = await requireOrg(orgSlug, viewer)
+    const org = await requireOrg(orgSlug, viewer, ["SUPER_ADMIN", "HR_ADMIN", "HR_MANAGER", "MANAGER"])
   const today = todayUTC()
   const yearAgo = new Date(today.getTime() - 365 * DAY)
   const scope = scopeFilter(f)
