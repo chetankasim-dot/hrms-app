@@ -1,7 +1,7 @@
 import { DashboardView } from "@/components/people/dashboard"
 import { AddEmployees } from "@/components/people/add-employees"
 import { getEmployeesDashboard } from "@/server/employees-dashboard"
-import { auth } from "@/lib/auth"
+import { requireActor } from "@/lib/access"
 import { notFound } from "next/navigation"
 
 const ADMIN_ROLES = ["SUPER_ADMIN", "HR_ADMIN", "HR_MANAGER"]
@@ -15,24 +15,22 @@ export default async function EmployeesDashboardPage({
 }) {
   const { orgSlug } = await params
   const sp = await searchParams
-  const session = await auth()
 
+  let actor
   let data
   try {
-    data = await getEmployeesDashboard(
-      orgSlug,
-      { userId: session?.user?.id, orgId: session?.user?.orgId ?? undefined },
-      { department: sp.department, location: sp.location }
-    )
+    actor = await requireActor(orgSlug)
+    data = await getEmployeesDashboard(orgSlug, {
+      department: sp.department,
+      location: sp.location,
+    })
   } catch {
     notFound()
   }
 
-  const canManage = ADMIN_ROLES.includes(session?.user?.role as string)
-
   return (
     <div className="space-y-4">
-      {canManage && (
+      {ADMIN_ROLES.includes(actor.role) && (
         <AddEmployees orgSlug={orgSlug} departments={data.departments} locations={data.locations} />
       )}
       <DashboardView data={data} orgSlug={orgSlug} />
