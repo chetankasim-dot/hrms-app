@@ -1,11 +1,12 @@
-import { auth } from "@/lib/auth"
-import { redirect } from "next/navigation"
-import { getOrg } from "@/lib/tenant"
+import { notFound } from "next/navigation"
+import { requireActor } from "@/lib/access"
 import { unscopedPrisma } from "@/lib/prisma"
 import Link from "next/link"
 import { ArrowLeft, Mail, Phone, Building2, Calendar, User, Award } from "lucide-react"
 import { format } from "date-fns"
 import { cn } from "@/lib/utils"
+
+const HR_ROLES = ["SUPER_ADMIN", "HR_ADMIN", "HR_MANAGER"]
 
 export default async function EmployeeProfilePage({
   params,
@@ -13,14 +14,18 @@ export default async function EmployeeProfilePage({
   params: Promise<{ orgSlug: string; id: string }>
 }) {
   const { orgSlug, id } = await params
-  const session = await auth()
-  if (!session?.user) redirect("/login")
 
-  const org = await getOrg(orgSlug)
-  if (!org) redirect("/login")
+  // Who is asking, and which workspace they belong to, comes from the database
+  let actor
+  try {
+    actor = await requireActor(orgSlug)
+  } catch {
+    notFound()
+  }
 
+  // Only look inside the caller's own workspace
   const employee = await unscopedPrisma.employee.findFirst({
-    where: { id },
+    where: { id, orgId: actor.orgId },
     include: {
       user: { select: { name: true, email: true } },
       department: { select: { name: true } },
@@ -41,16 +46,12 @@ export default async function EmployeeProfilePage({
     },
   })
 
-  if (!employee) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 text-center">
-        <p className="text-lg font-semibold text-gray-700">Employee not found</p>
-        <Link href={`/${orgSlug}/people`} className="mt-4 text-sm text-black underline">
-          Back to employees
-        </Link>
-      </div>
-    )
-  }
+  if (!employee) notFound()
+
+  // Private details: HR roles, the person themselves, or their direct manager
+  const isSelf = !!actor.employeeId && actor.employeeId === employee.id
+  const isTheirManager = !!actor.employeeId && employee.managerId === actor.employeeId
+  const canSeePrivate = HR_ROLES.includes(actor.role) || isSelf || isTheirManager
 
   const initials = `${employee.firstName[0] ?? ""}${employee.lastName[0] ?? ""}`.toUpperCase()
 
@@ -120,17 +121,19 @@ export default async function EmployeeProfilePage({
             Details
           </h2>
           <div className="space-y-3">
-            <div className="flex items-center gap-3">
-              <div className="h-8 w-8 rounded-lg bg-gray-50 flex items-center justify-center flex-shrink-0">
-                <Mail className="h-4 w-4 text-gray-400" />
+            {canSeePrivate && (
+              <div className="flex items-center gap-3">
+                <div className="h-8 w-8 rounded-lg bg-gray-50 flex items-center justify-center flex-shrink-0">
+                  <Mail className="h-4 w-4 text-gray-400" />
+                </div>
+                <div>
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wider">Email</p>
+                  <p className="text-sm font-medium">{employee.user.email}</p>
+                </div>
               </div>
-              <div>
-                <p className="text-[10px] text-gray-400 uppercase tracking-wider">Email</p>
-                <p className="text-sm font-medium">{employee.user.email}</p>
-              </div>
-            </div>
+            )}
 
-            {employee.phone && (
+            {canSeePrivate && employee.phone && (
               <div className="flex items-center gap-3">
                 <div className="h-8 w-8 rounded-lg bg-gray-50 flex items-center justify-center flex-shrink-0">
                   <Phone className="h-4 w-4 text-gray-400" />
@@ -180,7 +183,7 @@ export default async function EmployeeProfilePage({
               </div>
             </div>
 
-            {employee.grade && (
+            {canSeePrivate && employee.grade && (
               <div className="flex items-center gap-3">
                 <div className="h-8 w-8 rounded-lg bg-gray-50 flex items-center justify-center flex-shrink-0">
                   <Award className="h-4 w-4 text-gray-400" />
@@ -195,44 +198,46 @@ export default async function EmployeeProfilePage({
         </div>
 
         {/* Leave balances */}
-        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
-          <h2 className="font-semibold text-sm uppercase tracking-wider text-gray-400">
-            Leave balances — {new Date().getFullYear()}
-          </h2>
-          {employee.leaveBalances.length === 0 ? (
-            <p className="text-sm text-gray-400">No leave balances set up</p>
-          ) : (
-            <div className="space-y-3">
-              {employee.leaveBalances.map((balance) => {
-                const remaining = balance.allocated + balance.carried - balance.used
-                const pct = balance.allocated > 0
-                  ? Math.round(((balance.allocated - balance.used) / balance.allocated) * 100)
-                  : 0
-                const colorClass = leaveColors[balance.leaveType.code] ?? "bg-gray-50 text-gray-700 border-gray-100"
-                return (
-                  <div key={balance.id} className={cn("p-3 rounded-lg border", colorClass)}>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <p className="text-xs font-semibold">{balance.leaveType.name}</p>
-                      <p className="text-xs font-bold">{remaining} / {balance.allocated} days left</p>
+        {canSeePrivate && (
+          <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+            <h2 className="font-semibold text-sm uppercase tracking-wider text-gray-400">
+              Leave balances — {new Date().getFullYear()}
+            </h2>
+            {employee.leaveBalances.length === 0 ? (
+              <p className="text-sm text-gray-400">No leave balances set up</p>
+            ) : (
+              <div className="space-y-3">
+                {employee.leaveBalances.map((balance) => {
+                  const remaining = balance.allocated + balance.carried - balance.used
+                  const pct = balance.allocated > 0
+                    ? Math.round(((balance.allocated - balance.used) / balance.allocated) * 100)
+                    : 0
+                  const colorClass = leaveColors[balance.leaveType.code] ?? "bg-gray-50 text-gray-700 border-gray-100"
+                  return (
+                    <div key={balance.id} className={cn("p-3 rounded-lg border", colorClass)}>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <p className="text-xs font-semibold">{balance.leaveType.name}</p>
+                        <p className="text-xs font-bold">{remaining} / {balance.allocated} days left</p>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-black/10 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-current opacity-40 transition-all"
+                          style={{ width: `${Math.max(pct, 0)}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between mt-1">
+                        <p className="text-[10px] opacity-60">Used: {balance.used} days</p>
+                        {balance.carried > 0 && (
+                          <p className="text-[10px] opacity-60">Carried: {balance.carried}</p>
+                        )}
+                      </div>
                     </div>
-                    <div className="h-1.5 rounded-full bg-black/10 overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-current opacity-40 transition-all"
-                        style={{ width: `${Math.max(pct, 0)}%` }}
-                      />
-                    </div>
-                    <div className="flex justify-between mt-1">
-                      <p className="text-[10px] opacity-60">Used: {balance.used} days</p>
-                      {balance.carried > 0 && (
-                        <p className="text-[10px] opacity-60">Carried: {balance.carried}</p>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Direct reports */}
