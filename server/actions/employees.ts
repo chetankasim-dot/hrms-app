@@ -1,11 +1,10 @@
 "use server"
 
+import { requireActor } from "@/lib/access"
 import { unscopedPrisma } from "@/lib/prisma"
-import { auth } from "@/lib/auth"
 import { revalidatePath } from "next/cache"
 import type { EmploymentType } from "@prisma/client"
 
-const ADMIN_ROLES = ["SUPER_ADMIN", "HR_ADMIN", "HR_MANAGER"]
 const MAX_ROWS = 500
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -42,11 +41,9 @@ const TYPE_MAP: Record<string, EmploymentType> = {
 const typeKey = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "")
 
 async function requireAdmin(orgSlug: string) {
-  const session = await auth()
-  const user = session?.user
-  if (!user?.orgId || !ADMIN_ROLES.includes(user.role as string)) throw new Error("Not allowed")
-  const org = await unscopedPrisma.organization.findUnique({ where: { slug: orgSlug } })
-  if (!org || org.id !== user.orgId) throw new Error("Not found")
+  const actor = await requireActor(orgSlug, ["SUPER_ADMIN", "HR_ADMIN", "HR_MANAGER"])
+  const org = await unscopedPrisma.organization.findUnique({ where: { id: actor.orgId } })
+  if (!org) throw new Error("Not found")
   return org
 }
 
