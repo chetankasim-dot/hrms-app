@@ -96,6 +96,7 @@ export async function executeTool(
   viewerUserId?: string,
   viewerRole?: string
 ): Promise<unknown> {
+    const isStaff = !!viewerRole && viewerRole !== "EMPLOYEE"
   switch (toolName) {
 
     case "get_workforce_snapshot": {
@@ -159,7 +160,7 @@ export async function executeTool(
       })
       return employees.map((e) => ({
         name: `${e.firstName} ${e.lastName}`.trim(),
-        email: e.user.email,
+                email: isStaff ? e.user.email : undefined,
         code: e.employeeCode,
         designation: e.designation,
         department: e.department?.name,
@@ -171,6 +172,7 @@ export async function executeTool(
     }
 
     case "get_employee": {
+            if (!isStaff) return { error: "Not allowed for your role" }
       const { name, email } = input as { name?: string; email?: string }
       const employee = await unscopedPrisma.employee.findFirst({
         where: {
@@ -253,6 +255,7 @@ export async function executeTool(
     }
 
     case "get_leave_balances": {
+            if (!isStaff) return { error: "Not allowed for your role" }
       const { employeeName, employeeEmail } = input as {
         employeeName?: string
         employeeEmail?: string
