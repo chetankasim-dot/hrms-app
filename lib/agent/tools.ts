@@ -93,7 +93,8 @@ export async function executeTool(
   toolName: string,
   input: Record<string, unknown>,
   orgId: string,
-  viewerUserId?: string
+  viewerUserId?: string,
+  viewerRole?: string
 ): Promise<unknown> {
   switch (toolName) {
 
@@ -290,6 +291,7 @@ export async function executeTool(
     }
 
     case "get_leave_schedule": {
+            if (!viewerRole || viewerRole === "EMPLOYEE") return { error: "Not allowed for your role" }
       const { from, to, scope = "all" } = input as {
         from?: string
         to?: string

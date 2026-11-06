@@ -37,7 +37,8 @@ export async function* runAgent(
   orgId: string,
   orgName: string,
   history: Array<{ role: "user" | "assistant"; content: string }>,
-  userId?: string
+    userId?: string,
+  userRole?: string
 ): AsyncGenerator<StreamEvent> {
   const today = new Date().toISOString().slice(0, 10)
   const systemPrompt = SYSTEM_PROMPT
@@ -100,7 +101,8 @@ export async function* runAgent(
           toolUse.name,
           toolUse.input as Record<string, unknown>,
           orgId,
-          userId
+          userId,
+          userRole
         )
         yield { type: "tool_done", toolName: toolUse.name, result }
         toolResults.push({
