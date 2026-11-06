@@ -1,7 +1,10 @@
 import { DashboardView } from "@/components/people/dashboard"
+import { AddEmployees } from "@/components/people/add-employees"
 import { getEmployeesDashboard } from "@/server/employees-dashboard"
 import { auth } from "@/lib/auth"
 import { notFound } from "next/navigation"
+
+const ADMIN_ROLES = ["SUPER_ADMIN", "HR_ADMIN", "HR_MANAGER"]
 
 export default async function EmployeesDashboardPage({
   params,
@@ -24,5 +27,15 @@ export default async function EmployeesDashboardPage({
   } catch {
     notFound()
   }
-  return <DashboardView data={data} orgSlug={orgSlug} />
+
+  const canManage = ADMIN_ROLES.includes(session?.user?.role as string)
+
+  return (
+    <div className="space-y-4">
+      {canManage && (
+        <AddEmployees orgSlug={orgSlug} departments={data.departments} locations={data.locations} />
+      )}
+      <DashboardView data={data} orgSlug={orgSlug} />
+    </div>
+  )
 }

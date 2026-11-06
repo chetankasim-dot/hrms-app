@@ -4,29 +4,42 @@ import { useState, useTransition } from "react"
 import { signIn } from "next-auth/react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
+import { findWorkspaces, type WorkspaceMatch } from "@/server/actions/login"
 
 export default function LoginPage() {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
-  const [form, setForm] = useState({ workspace: "", email: "", password: "" })
-  const [step, setStep] = useState<"workspace" | "signin">("workspace")
+  const [form, setForm] = useState({ email: "", password: "" })
+  const [choices, setChoices] = useState<WorkspaceMatch[] | null>(null)
 
-  async function handleSignIn(e: React.FormEvent) {
+  async function enter(slug: string, email: string) {
+    const result = await signIn("credentials", {
+      email,
+      password: form.password,
+      orgSlug: slug,
+      redirect: false,
+    })
+    if (result?.error) {
+      setError("Invalid email or password")
+      setChoices(null)
+      return
+    }
+    router.push(`/${slug}`)
+  }
+
+  function handleSignIn(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
     startTransition(async () => {
-      const result = await signIn("credentials", {
-        email: form.email,
-        password: form.password,
-        orgSlug: form.workspace,
-        redirect: false,
-      })
-      if (result?.error) {
+      const matches = await findWorkspaces(form.email, form.password)
+      if (matches.length === 0) {
         setError("Invalid email or password")
-        return
+      } else if (matches.length === 1) {
+        await enter(matches[0].slug, matches[0].email)
+      } else {
+        setChoices(matches)
       }
-      router.push(`/${form.workspace}`)
     })
   }
 
@@ -35,12 +48,9 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <h1 className="text-2xl font-bold">Sign in to HRMS</h1>
-          {step === "workspace" && (
-            <p className="text-gray-500 text-sm mt-1">Enter your workspace to continue</p>
-          )}
-          {step === "signin" && (
-            <p className="text-gray-500 text-sm mt-1">Signing in to <strong>{form.workspace}</strong></p>
-          )}
+          <p className="text-gray-500 text-sm mt-1">
+            {choices ? "Choose your workspace" : "Enter your email and password"}
+          </p>
         </div>
 
         {error && (
@@ -49,39 +59,14 @@ export default function LoginPage() {
           </div>
         )}
 
-        {step === "workspace" && (
-          <div className="space-y-4">
-            <div>
-              <label className="text-xs font-medium text-gray-600">Workspace</label>
-              <input
-                type="text"
-                value={form.workspace}
-                onChange={(e) => setForm(p => ({ ...p, workspace: e.target.value.toLowerCase() }))}
-                placeholder="your-company"
-                className="mt-1.5 h-10 w-full px-3 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-black"
-              />
-            </div>
-            <button
-              onClick={() => { if (form.workspace) setStep("signin") }}
-              className="w-full h-10 rounded-lg bg-black text-white text-sm font-medium hover:bg-gray-800"
-            >
-              Continue →
-            </button>
-            <p className="text-center text-xs text-gray-500">
-              No workspace?{" "}
-              <Link href="/signup" className="text-black underline">Create one free</Link>
-            </p>
-          </div>
-        )}
-
-        {step === "signin" && (
+        {!choices && (
           <form onSubmit={handleSignIn} className="space-y-4">
             <div>
               <label className="text-xs font-medium text-gray-600">Email</label>
               <input
                 type="email"
                 value={form.email}
-                onChange={(e) => setForm(p => ({ ...p, email: e.target.value }))}
+                onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
                 required
                 placeholder="you@company.com"
                 className="mt-1.5 h-10 w-full px-3 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-black"
@@ -92,7 +77,7 @@ export default function LoginPage() {
               <input
                 type="password"
                 value={form.password}
-                onChange={(e) => setForm(p => ({ ...p, password: e.target.value }))}
+                onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))}
                 required
                 className="mt-1.5 h-10 w-full px-3 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-black"
               />
@@ -104,14 +89,37 @@ export default function LoginPage() {
             >
               {isPending ? "Signing in…" : "Sign in"}
             </button>
+            <p className="text-center text-xs text-gray-500">
+              No workspace?{" "}
+              <Link href="/signup" className="text-black underline">Create one free</Link>
+            </p>
+          </form>
+        )}
+
+        {choices && (
+          <div className="space-y-3">
+            {choices.map((c) => (
+              <button
+                key={c.slug}
+                disabled={isPending}
+                onClick={() => {
+                  setError(null)
+                  startTransition(async () => { await enter(c.slug, c.email) })
+                }}
+                className="w-full rounded-lg border border-gray-200 bg-white px-4 py-3 text-left text-sm hover:border-black disabled:opacity-50"
+              >
+                <div className="font-medium">{c.name}</div>
+                <div className="text-xs text-gray-500">{c.slug}</div>
+              </button>
+            ))}
             <button
               type="button"
-              onClick={() => setStep("workspace")}
+              onClick={() => setChoices(null)}
               className="w-full text-xs text-gray-500 hover:text-gray-800"
             >
-              ← Change workspace
+              ← Back
             </button>
-          </form>
+          </div>
         )}
       </div>
     </div>

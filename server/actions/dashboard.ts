@@ -27,3 +27,21 @@ export async function approveItem(kind: "Leave" | "Timesheet", id: string, orgSl
   }
   revalidatePath(`/${orgSlug}/people`)
 }
+
+export async function approveMany(
+  items: { kind: "Leave" | "Timesheet"; id: string }[],
+  orgSlug: string
+) {
+  let approved = 0
+  let failed = 0
+  for (const it of items) {
+    try {
+      await approveItem(it.kind, it.id, orgSlug)
+      approved++
+    } catch {
+      failed++
+    }
+  }
+  revalidatePath(`/${orgSlug}/people/approvals`)
+  return { approved, failed }
+}

@@ -1,262 +1,138 @@
-﻿import { auth } from "@/lib/auth"
-import { redirect, notFound } from "next/navigation"
-import { getOrg } from "@/lib/tenant"
-import { unscopedPrisma } from "@/lib/prisma"
-import Link from "next/link"
-import { ArrowLeft, Mail, Phone, Building2, Calendar, User, Award } from "lucide-react"
-import { format } from "date-fns"
-import { cn } from "@/lib/utils"
+﻿import Link from "next/link"
+import { notFound } from "next/navigation"
+import { auth } from "@/lib/auth"
+import { getDirectory, type PersonCard } from "@/server/employees-people"
+import { FilterBar } from "@/components/people/dashboard"
 
-export default async function EmployeeProfilePage({
+type SP = { q?: string; view?: string; department?: string; location?: string; status?: string }
+
+const DOT: Record<string, string> = {
+  office: "bg-green-500",
+  wfh: "bg-green-500",
+  leave: "bg-amber-500",
+  pending: "bg-red-500",
+  exited: "bg-gray-400",
+}
+
+function Cards({ cards, orgSlug }: { cards: PersonCard[]; orgSlug: string }) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {cards.map((p) => (
+        <Link
+          key={p.id}
+          href={`/${orgSlug}/people/${p.id}`}
+          className="flex items-center gap-3 rounded-xl border bg-white p-4 hover:border-teal-600"
+        >
+          <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full border-2 border-teal-600 bg-teal-50 text-sm font-semibold">
+            {p.initials}
+          </div>
+          <div className="min-w-0">
+            <div className="truncate font-semibold">{p.name}</div>
+            <div className="truncate text-sm text-gray-500">{p.designation}</div>
+            <div className="mt-1 flex items-center gap-2 text-sm">
+              <span className={`h-2.5 w-2.5 rounded-full ${DOT[p.status]}`} />
+              {p.statusLabel}
+            </div>
+          </div>
+        </Link>
+      ))}
+      {cards.length === 0 && <div className="text-sm text-gray-500">No people found</div>}
+    </div>
+  )
+}
+
+export default async function DirectoryPage({
   params,
+  searchParams,
 }: {
-  params: Promise<{ orgSlug: string; id: string }>
+  params: Promise<{ orgSlug: string }>
+  searchParams: Promise<SP>
 }) {
-  const { orgSlug, id } = await params
+  const { orgSlug } = await params
+  const sp = await searchParams
   const session = await auth()
-  if (!session?.user) redirect("/login")
 
-  const org = await getOrg(orgSlug)
-  if (!org) redirect("/login")
+  let data
+  try {
+    data = await getDirectory(orgSlug, { userId: session?.user?.id, orgId: session?.user?.orgId }, sp)
+  } catch {
+    notFound()
+  }
 
-  const employee = await unscopedPrisma.employee.findFirst({
-    where: { id, orgId: org.id },
-    include: {
-      user: { select: { name: true, email: true } },
-      department: { select: { name: true } },
-      location: { select: { name: true, city: true } },
-      manager: {
-        include: { user: { select: { name: true } } },
-      },
-      directReports: {
-        include: { user: { select: { name: true } } },
-        where: { status: "ACTIVE" },
-      },
-      leaveBalances: {
-        include: { leaveType: { select: { name: true, code: true, color: true } } },
-        where: { year: new Date().getFullYear() },
-      },
-      compensation: {
-        orderBy: { effectiveDate: "desc" },
-        take: 1,
-      },
-    },
-  })
+  const view = sp.view ?? "all"
+  const link = (changes: Record<string, string | undefined>) => {
+    const p = new URLSearchParams()
+    for (const [k, v] of Object.entries({ ...sp, ...changes })) if (v) p.set(k, v)
+    const s = p.toString()
+    return `/${orgSlug}/people/directory${s ? "?" + s : ""}`
+  }
 
-  if (!employee) notFound()
-
-  const initials = `${employee.firstName[0] ?? ""}${employee.lastName[0] ?? ""}`.toUpperCase()
-
-  const AVATAR_COLORS = [
-    "bg-violet-100 text-violet-700",
-    "bg-blue-100 text-blue-700",
-    "bg-emerald-100 text-emerald-700",
-    "bg-amber-100 text-amber-700",
-    "bg-rose-100 text-rose-700",
-    "bg-cyan-100 text-cyan-700",
+  const subTabs = [
+    { key: "all", label: `All (${data.activeCount})` },
+    { key: "designation", label: "By designation" },
+    { key: "location", label: "By location" },
+    { key: "ex", label: `Ex-employees (${data.exCount})` },
   ]
-  let hash = 0
-  for (const ch of employee.firstName + employee.lastName) hash += ch.charCodeAt(0)
-  const avatarColor = AVATAR_COLORS[hash % AVATAR_COLORS.length]
 
-  const leaveColors: Record<string, string> = {
-    CL: "bg-indigo-50 text-indigo-700 border-indigo-100",
-    SL: "bg-amber-50 text-amber-700 border-amber-100",
-    EL: "bg-emerald-50 text-emerald-700 border-emerald-100",
+  const groups: Record<string, PersonCard[]> = {}
+  if (view === "designation" || view === "location") {
+    for (const c of data.cards) {
+      const key = view === "designation" ? c.designation : c.location
+      ;(groups[key] ??= []).push(c)
+    }
   }
 
   return (
-    <div className="max-w-4xl space-y-5">
-      {/* Back */}
-      <Link
-        href={`/${orgSlug}/people`}
-        className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-black transition-colors"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" />
-        Back to Employees
-      </Link>
+    <div className="space-y-4">
+      <FilterBar departments={data.departments} locations={data.locations} />
 
-      {/* Profile header */}
-      <div className="bg-white border border-gray-200 rounded-xl p-6">
-        <div className="flex items-start gap-5 flex-wrap">
-          <div className={cn(
-            "h-16 w-16 rounded-2xl flex items-center justify-center text-2xl font-bold flex-shrink-0",
-            avatarColor
-          )}>
-            {initials}
-          </div>
-          <div className="flex-1 min-w-0">
-            <h1 className="text-2xl font-bold">
-              {employee.firstName} {employee.lastName}
-            </h1>
-            <p className="text-gray-500 mt-0.5">
-              {employee.designation ?? "No designation"} ┬╖ {employee.department?.name ?? "No department"}
-            </p>
-            <div className="flex items-center gap-3 mt-2 flex-wrap">
-              <span className="text-xs px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 font-medium">
-                {employee.employeeCode}
-              </span>
-              <span className="text-xs px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 font-medium border border-emerald-100">
-                {employee.status.replace("_", " ")}
-              </span>
-              <span className="text-xs px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 font-medium border border-blue-100">
-                {employee.employmentType.replace("_", " ")}
-              </span>
-            </div>
-          </div>
-        </div>
+      <form className="flex gap-2">
+        <input
+          name="q"
+          defaultValue={sp.q ?? ""}
+          placeholder="Search by name, role, code or department"
+          className="w-full rounded-xl border-2 border-teal-600 bg-white px-4 py-2.5 text-sm"
+        />
+        {sp.view && <input type="hidden" name="view" value={sp.view} />}
+        {sp.department && <input type="hidden" name="department" value={sp.department} />}
+        {sp.location && <input type="hidden" name="location" value={sp.location} />}
+      </form>
+
+      <div className="flex gap-6 text-sm">
+        {subTabs.map((t) => (
+          <Link
+            key={t.key}
+            href={link({ view: t.key === "all" ? undefined : t.key, status: undefined })}
+            className={view === t.key ? "font-medium text-teal-700" : "text-gray-500"}
+          >
+            {t.label}
+          </Link>
+        ))}
+                <Link href={`/${orgSlug}/people/org-chart`} className="text-gray-500">Org chart</Link>
       </div>
 
-      <div className="grid md:grid-cols-2 gap-5">
-        {/* Contact & details */}
-        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
-          <h2 className="font-semibold text-sm uppercase tracking-wider text-gray-400">
-            Details
-          </h2>
-          <div className="space-y-3">
-            <div className="flex items-center gap-3">
-              <div className="h-8 w-8 rounded-lg bg-gray-50 flex items-center justify-center flex-shrink-0">
-                <Mail className="h-4 w-4 text-gray-400" />
-              </div>
-              <div>
-                <p className="text-[10px] text-gray-400 uppercase tracking-wider">Email</p>
-                <p className="text-sm font-medium">{employee.user.email}</p>
-              </div>
-            </div>
-
-            {employee.phone && (
-              <div className="flex items-center gap-3">
-                <div className="h-8 w-8 rounded-lg bg-gray-50 flex items-center justify-center flex-shrink-0">
-                  <Phone className="h-4 w-4 text-gray-400" />
-                </div>
-                <div>
-                  <p className="text-[10px] text-gray-400 uppercase tracking-wider">Phone</p>
-                  <p className="text-sm font-medium">{employee.phone}</p>
-                </div>
-              </div>
-            )}
-
-            <div className="flex items-center gap-3">
-              <div className="h-8 w-8 rounded-lg bg-gray-50 flex items-center justify-center flex-shrink-0">
-                <Building2 className="h-4 w-4 text-gray-400" />
-              </div>
-              <div>
-                <p className="text-[10px] text-gray-400 uppercase tracking-wider">Department</p>
-                <p className="text-sm font-medium">{employee.department?.name ?? "ΓÇö"}</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <div className="h-8 w-8 rounded-lg bg-gray-50 flex items-center justify-center flex-shrink-0">
-                <Calendar className="h-4 w-4 text-gray-400" />
-              </div>
-              <div>
-                <p className="text-[10px] text-gray-400 uppercase tracking-wider">Joined</p>
-                <p className="text-sm font-medium">
-                  {employee.joinDate
-                    ? format(new Date(employee.joinDate), "dd MMMM yyyy")
-                    : "ΓÇö"}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <div className="h-8 w-8 rounded-lg bg-gray-50 flex items-center justify-center flex-shrink-0">
-                <User className="h-4 w-4 text-gray-400" />
-              </div>
-              <div>
-                <p className="text-[10px] text-gray-400 uppercase tracking-wider">Reports to</p>
-                <p className="text-sm font-medium">
-                  {employee.manager
-                    ? `${employee.manager.firstName} ${employee.manager.lastName}`
-                    : "No manager assigned"}
-                </p>
-              </div>
-            </div>
-
-            {employee.grade && (
-              <div className="flex items-center gap-3">
-                <div className="h-8 w-8 rounded-lg bg-gray-50 flex items-center justify-center flex-shrink-0">
-                  <Award className="h-4 w-4 text-gray-400" />
-                </div>
-                <div>
-                  <p className="text-[10px] text-gray-400 uppercase tracking-wider">Grade</p>
-                  <p className="text-sm font-medium">{employee.grade}</p>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Leave balances */}
-        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
-          <h2 className="font-semibold text-sm uppercase tracking-wider text-gray-400">
-            Leave balances ΓÇö {new Date().getFullYear()}
-          </h2>
-          {employee.leaveBalances.length === 0 ? (
-            <p className="text-sm text-gray-400">No leave balances set up</p>
+      {view !== "ex" && data.pendingCount > 0 && (
+        <div className="rounded-lg border border-teal-600 bg-teal-50 px-4 py-2 text-sm">
+          {data.pendingCount} {data.pendingCount === 1 ? "person is" : "people are"} yet to check in.{" "}
+          {sp.status === "pending" ? (
+            <Link href={link({ status: undefined })} className="font-medium underline">Show all</Link>
           ) : (
-            <div className="space-y-3">
-              {employee.leaveBalances.map((balance) => {
-                const remaining = balance.allocated + balance.carried - balance.used
-                const pct = balance.allocated > 0
-                  ? Math.round(((balance.allocated - balance.used) / balance.allocated) * 100)
-                  : 0
-                const colorClass = leaveColors[balance.leaveType.code] ?? "bg-gray-50 text-gray-700 border-gray-100"
-                return (
-                  <div key={balance.id} className={cn(
-                    "p-3 rounded-lg border",
-                    colorClass
-                  )}>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <p className="text-xs font-semibold">{balance.leaveType.name}</p>
-                      <p className="text-xs font-bold">{remaining} / {balance.allocated} days left</p>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-black/10 overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-current opacity-40 transition-all"
-                        style={{ width: `${Math.max(pct, 0)}%` }}
-                      />
-                    </div>
-                    <div className="flex justify-between mt-1">
-                      <p className="text-[10px] opacity-60">Used: {balance.used} days</p>
-                      {balance.carried > 0 && (
-                        <p className="text-[10px] opacity-60">Carried: {balance.carried}</p>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
+            <Link href={link({ status: "pending" })} className="font-medium underline">View list</Link>
           )}
         </div>
-      </div>
+      )}
 
-      {/* Direct reports */}
-      {employee.directReports.length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-xl p-5">
-          <h2 className="font-semibold text-sm uppercase tracking-wider text-gray-400 mb-4">
-            Direct reports ({employee.directReports.length})
-          </h2>
-          <div className="flex flex-wrap gap-2">
-            {employee.directReports.map((report) => (
-              <Link
-                key={report.id}
-                href={`/${orgSlug}/people/${report.id}`}
-              >
-                <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 hover:border-black transition-colors cursor-pointer">
-                  <div className="h-6 w-6 rounded-md bg-gray-100 flex items-center justify-center text-[10px] font-bold text-gray-600">
-                    {report.firstName[0]}{report.lastName[0]}
-                  </div>
-                  <p className="text-sm font-medium">
-                    {report.firstName} {report.lastName}
-                  </p>
-                  <p className="text-xs text-gray-400">{report.designation}</p>
-                </div>
-              </Link>
-            ))}
-          </div>
-        </div>
+      {view === "designation" || view === "location" ? (
+        Object.entries(groups)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([name, cards]) => (
+            <div key={name}>
+              <div className="mb-2 text-sm font-semibold">{name} ({cards.length})</div>
+              <Cards cards={cards} orgSlug={orgSlug} />
+            </div>
+          ))
+      ) : (
+        <Cards cards={data.cards} orgSlug={orgSlug} />
       )}
     </div>
   )

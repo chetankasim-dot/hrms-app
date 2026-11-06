@@ -43,7 +43,7 @@ export function PeopleTabs({ orgSlug }: { orgSlug: string }) {
 
 /* ---------- Filters ---------- */
 
-function FilterBar({
+export function FilterBar({
   departments,
   locations,
 }: {
