@@ -4,6 +4,7 @@ import Credentials from "next-auth/providers/credentials"
 import { unscopedPrisma } from "@/lib/prisma"
 import { compare } from "bcryptjs"
 import type { Role } from "@prisma/client"
+import { isBlocked, recordFailure, clearFailures } from "@/lib/rate-limit"
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
@@ -17,30 +18,35 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         password: { label: "Password", type: "password" },
         orgSlug: { label: "Workspace", type: "text" },
       },
-      async authorize(credentials) {
+            async authorize(credentials) {
         try {
-          if (!credentials?.email || !credentials?.password || !credentials?.orgSlug) {
-            return null
-          }
+          if (!credentials?.email || !credentials?.password || !credentials?.orgSlug) return null
+          const key = `login:${String(credentials.email).toLowerCase()}`
+          if (isBlocked(key)) return null
+
           const org = await unscopedPrisma.organization.findUnique({
             where: { slug: credentials.orgSlug as string },
           })
-          console.log("AUTH: org lookup:", org?.id ?? "NOT FOUND")
-          if (!org) return null
+          const user = org
+            ? await unscopedPrisma.user.findFirst({
+                where: {
+                  orgId: org.id,
+                  email: { equals: credentials.email as string, mode: "insensitive" },
+                },
+              })
+            : null
+          const valid =
+            !!user?.passwordHash &&
+            user.isActive &&
+            (await compare(credentials.password as string, user.passwordHash))
+          if (!valid || !user) {
+            recordFailure(key)
+            return null
+          }
 
-          const user = await unscopedPrisma.user.findFirst({
-            where: { orgId: org.id, email: credentials.email as string },
-          })
-          console.log("AUTH: user lookup:", user?.id ?? "NOT FOUND")
-          if (!user?.passwordHash) return null
-
-          const valid = await compare(credentials.password as string, user.passwordHash)
-          console.log("AUTH: password valid:", valid)
-          if (!valid) return null
-
+          clearFailures(key)
           return user
-        } catch (error) {
-          console.error("AUTH ERROR:", error)
+        } catch {
           return null
         }
       },
