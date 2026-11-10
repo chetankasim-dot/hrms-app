@@ -16,7 +16,6 @@
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "csv-parse": "^6.2.1",
     "date-fns": "^4.1.0",
     "lucide-react": "^1.14.0",
     "next": "^16.4.6",
