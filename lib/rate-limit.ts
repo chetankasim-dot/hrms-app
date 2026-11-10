@@ -24,3 +24,17 @@ export function recordFailure(key: string) {
 export function clearFailures(key: string) {
   fails.delete(key)
 }
+const hits = new Map<string, number[]>()
+
+// Allows `max` calls per `windowMs`. Returns false when the limit is reached.
+export function allowCall(key: string, max: number, windowMs: number) {
+  const now = Date.now()
+  const recent = (hits.get(key) ?? []).filter((t) => now - t < windowMs)
+  if (recent.length >= max) {
+    hits.set(key, recent)
+    return false
+  }
+  recent.push(now)
+  hits.set(key, recent)
+  return true
+}

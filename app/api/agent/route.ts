@@ -2,6 +2,8 @@ import { requireActor } from "@/lib/access"
 import { getOrg } from "@/lib/tenant"
 import { runAgent } from "@/lib/agent/orchestrator"
 import { NextResponse } from "next/server"
+import { checkAIQuota, incrementAIUsage } from "@/lib/tenant"
+import { allowCall } from "@/lib/rate-limit"
 
 export const runtime = "nodejs"
 export const maxDuration = 60
@@ -22,7 +24,15 @@ export async function POST(req: Request) {
 
   const org = await getOrg(orgSlug)
   if (!org || org.id !== actor.orgId) return new NextResponse("Org not found", { status: 404 })
+  // 20 questions per minute per user
+  if (!allowCall(`agent:${actor.userId}`, 20, 60_000))
+    return new NextResponse("Too many requests", { status: 429 })
 
+  const quota = await checkAIQuota(org.id)
+  if (!quota.allowed)
+    return new NextResponse("Your organisation has used its AI quota for this period", { status: 429 })
+
+  await incrementAIUsage(org.id)
   // Only user/assistant text from the browser, capped in count and size
   const history = (Array.isArray(body?.history) ? body.history : [])
     .filter(
