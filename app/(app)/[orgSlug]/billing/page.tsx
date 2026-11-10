@@ -1,9 +1,11 @@
 import { auth } from "@/lib/auth"
 import { redirect } from "next/navigation"
 import Link from "next/link"
+import { requirePageRole } from "@/lib/access"
 
 export default async function Page({ params }: { params: Promise<{ orgSlug: string }> }) {
   const { orgSlug } = await params
+    await requirePageRole(orgSlug, ["SUPER_ADMIN", "HR_ADMIN"])
   const session = await auth()
   if (!session?.user) redirect("/login")
   return (
