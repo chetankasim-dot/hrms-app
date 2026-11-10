@@ -37,7 +37,7 @@ function makePrismaClient() {
           if (!modelName || !TENANT_MODELS.has(modelName)) return query(args)
 
           const ctx = orgContext.getStore()
-          if (!ctx?.orgId) return query(args)
+                    if (!ctx?.orgId) throw new Error("No org context: use withOrg() or unscopedPrisma")
 
           const orgId = ctx.orgId
           const a = args as LooseArgs
