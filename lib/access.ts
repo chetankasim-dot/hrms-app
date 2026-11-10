@@ -39,3 +39,13 @@ export async function requireActor(orgSlug?: string, roles?: Role[]): Promise<Ac
     employeeId: user.employee?.id ?? null,
   }
 }
+import { notFound } from "next/navigation"
+
+// Use at the top of a page: shows "not found" unless the user has one of the roles.
+export async function requirePageRole(orgSlug: string, roles: Role[]) {
+  try {
+    return await requireActor(orgSlug, roles)
+  } catch {
+    notFound()
+  }
+}
