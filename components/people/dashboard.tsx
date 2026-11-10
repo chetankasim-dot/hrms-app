@@ -346,7 +346,7 @@ function AskHrAi({ orgSlug }: { orgSlug: string }) {
       {status && <div className="mt-2 text-gray-500">{status}</div>}
       {answer && (
         <div className="prose prose-sm mt-2 max-h-64 max-w-none overflow-y-auto text-gray-800 [&_table]:w-full [&_table]:text-xs [&_td]:border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:px-2 [&_th]:py-1 [&_th]:text-left">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: () => null }}>{answer}</ReactMarkdown>
         </div>
       )}
     </div>

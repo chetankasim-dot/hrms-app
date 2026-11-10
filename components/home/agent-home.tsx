@@ -235,7 +235,7 @@ export function AgentHome({ orgName, orgSlug, orgId, userName, greeting, firstNa
                       <p className="whitespace-pre-wrap">{msg.content}</p>
                     ) : (
                       <div className="prose prose-sm max-w-none prose-headings:font-semibold prose-p:leading-relaxed [&_table]:w-full [&_table]:border-collapse [&_table]:text-sm [&_thead]:bg-gray-50 [&_th]:border [&_th]:border-gray-200 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_th]:text-xs [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-gray-500 [&_td]:border [&_td]:border-gray-200 [&_td]:px-3 [&_td]:py-2 [&_tr:hover]:bg-gray-50">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: () => null }}>{msg.content}</ReactMarkdown>
                       </div>
                     )
                   )}
