@@ -1,16 +1,30 @@
 import type { NextConfig } from "next"
 
+const isDev = process.env.NODE_ENV !== "production"
+
+const csp = [
+  "default-src 'self'",
+  // Next.js needs inline scripts; dev mode also needs eval
+  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https://*.googleusercontent.com https://avatars.githubusercontent.com",
+  "font-src 'self' data:",
+  // Dev server uses websockets for hot reload
+  `connect-src 'self'${isDev ? " ws: wss:" : ""}`,
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join("; ")
+
 const securityHeaders = [
-  // Force HTTPS for two years (browsers ignore this on plain http://localhost)
   { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
-  // Stop other sites from embedding our pages in a frame (clickjacking)
   { key: "X-Frame-Options", value: "DENY" },
-  // Stop browsers guessing file types
   { key: "X-Content-Type-Options", value: "nosniff" },
-  // Do not leak full page addresses to other sites
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-  // Switch off browser features the app does not use
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+  // Report-only: logs problems in the browser console, blocks nothing yet
+    { key: "Content-Security-Policy", value: csp },
 ]
 
 const nextConfig: NextConfig = {
@@ -23,7 +37,6 @@ const nextConfig: NextConfig = {
       { protocol: "https", hostname: "avatars.githubusercontent.com" },
     ],
   },
-  // csv-parse removed: nothing uses it any more
   serverExternalPackages: ["@prisma/client", "prisma", "bcryptjs"],
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }]
