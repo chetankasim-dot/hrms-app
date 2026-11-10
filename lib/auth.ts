@@ -87,10 +87,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       }
       return true
     },
-    async redirect({ url, baseUrl }) {
+        async redirect({ url, baseUrl }) {
       const base = process.env.NEXTAUTH_URL || process.env.AUTH_URL || baseUrl
-      if (url.startsWith("/")) return `${base}${url}`
-      if (url.startsWith(base)) return url
+      try {
+        const target = new URL(url, base)
+        // Only allow redirects that stay on our own site
+        if (target.origin === new URL(base).origin) return target.toString()
+      } catch {
+        // fall through to the safe default
+      }
       return base
     },
   },
