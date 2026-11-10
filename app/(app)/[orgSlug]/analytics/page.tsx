@@ -1,11 +1,9 @@
-import { auth } from "@/lib/auth"
-import { redirect } from "next/navigation"
 import Link from "next/link"
+import { requirePageRole } from "@/lib/access"
 
 export default async function Page({ params }: { params: Promise<{ orgSlug: string }> }) {
   const { orgSlug } = await params
-  const session = await auth()
-  if (!session?.user) redirect("/login")
+  await requirePageRole(orgSlug, ["SUPER_ADMIN", "HR_ADMIN", "HR_MANAGER"])
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
