@@ -53,10 +53,18 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
-    async jwt({ token, user }) {
-      if (user) {
+        async jwt({ token, user }) {
+      const id = (user?.id ?? token.id ?? token.sub) as string | undefined
+      if (!id) return token
+
+      const now = Date.now()
+      const checkedAt = (token.checkedAt as number | undefined) ?? 0
+      const stale = now - checkedAt > 5 * 60 * 1000
+
+      // Re-read from the database at sign-in and then at most every 5 minutes
+      if (user || stale) {
         const dbUser = await unscopedPrisma.user.findUnique({
-          where: { id: user.id },
+          where: { id },
           select: { id: true, role: true, isActive: true, orgId: true },
         })
         if (dbUser) {
@@ -64,7 +72,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           token.role = dbUser.role
           token.isActive = dbUser.isActive
           token.orgId = dbUser.orgId
+        } else {
+          token.isActive = false // user was deleted
         }
+        token.checkedAt = now
       }
       return token
     },
