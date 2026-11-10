@@ -5,6 +5,7 @@ import Link from "next/link"
 import { ArrowLeft, Mail, Phone, Building2, Calendar, User, Award } from "lucide-react"
 import { format } from "date-fns"
 import { cn } from "@/lib/utils"
+import { InviteButton } from "@/components/people/invite-button"
 
 const HR_ROLES = ["SUPER_ADMIN", "HR_ADMIN", "HR_MANAGER"]
 
@@ -52,6 +53,7 @@ export default async function EmployeeProfilePage({
   const isSelf = !!actor.employeeId && actor.employeeId === employee.id
   const isTheirManager = !!actor.employeeId && employee.managerId === actor.employeeId
   const canSeePrivate = HR_ROLES.includes(actor.role) || isSelf || isTheirManager
+    const canInvite = HR_ROLES.includes(actor.role) && !isSelf
 
   const initials = `${employee.firstName[0] ?? ""}${employee.lastName[0] ?? ""}`.toUpperCase()
 
@@ -113,7 +115,14 @@ export default async function EmployeeProfilePage({
           </div>
         </div>
       </div>
-
+            {canInvite && (
+        <div className="bg-white border border-gray-200 rounded-xl p-5">
+          <h2 className="font-semibold text-sm uppercase tracking-wider text-gray-400 mb-3">
+            Sign-in access
+          </h2>
+          <InviteButton orgSlug={orgSlug} employeeId={employee.id} />
+        </div>
+      )}
       <div className="grid md:grid-cols-2 gap-5">
         {/* Details */}
         <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
