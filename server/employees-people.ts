@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma"
+import { unscopedPrisma as prisma } from "@/lib/prisma"
 import type { Prisma } from "@prisma/client"
 import { requireActor } from "@/lib/access"
 import type { Role } from "@prisma/client"
