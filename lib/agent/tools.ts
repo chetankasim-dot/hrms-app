@@ -156,7 +156,7 @@ export async function executeTool(
           department: { select: { name: true } },
           manager: { include: { user: { select: { name: true } } } },
         },
-        take: Number(limit),
+                take: Math.min(Math.max(Number(limit) || 10, 1), 25),
       })
       return employees.map((e) => ({
         name: `${e.firstName} ${e.lastName}`.trim(),
@@ -237,7 +237,7 @@ export async function executeTool(
         where: {
           orgId,
           status: "ACTIVE",
-          joinDate: { gte: subDays(new Date(), Number(days)) },
+                    joinDate: { gte: subDays(new Date(), Math.min(Math.max(Number(days) || 90, 1), 730)) },
         },
         include: {
           user: { select: { name: true, email: true } },

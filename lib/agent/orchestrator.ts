@@ -28,7 +28,7 @@ Today's date is {TODAY} (YYYY-MM-DD). Use it to work out "today", "this week" an
 export type StreamEvent =
   | { type: "text"; text: string }
   | { type: "tool_start"; toolName: string }
-  | { type: "tool_done"; toolName: string; result: unknown }
+  |{ type: "tool_done"; toolName: string }
   | { type: "done" }
   | { type: "error"; message: string }
 
@@ -104,7 +104,7 @@ export async function* runAgent(
           userId,
           userRole
         )
-        yield { type: "tool_done", toolName: toolUse.name, result }
+                yield { type: "tool_done", toolName: toolUse.name }
         toolResults.push({
           type: "tool_result",
           tool_use_id: toolUse.id,
