@@ -17,11 +17,10 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
 }
 
 const NAV = [
-  {
+    {
     section: "Workspace",
     items: [
       { label: "Home", href: "", icon: "LayoutDashboard" },
-      { label: "AI Agent", href: "/agent", icon: "Bot" },
     ],
   },
   {
