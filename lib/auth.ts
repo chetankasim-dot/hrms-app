@@ -18,10 +18,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         password: { label: "Password", type: "password" },
         orgSlug: { label: "Workspace", type: "text" },
       },
-            async authorize(credentials) {
+                  async authorize(credentials, request) {
         try {
           if (!credentials?.email || !credentials?.password || !credentials?.orgSlug) return null
-          const key = `login:${String(credentials.email).toLowerCase()}`
+                    const xff = request?.headers?.get("x-forwarded-for")
+          const ip = xff ? xff.split(",").map((s) => s.trim()).filter(Boolean).pop() ?? "unknown" : "unknown"
+          const key = `login:${String(credentials.email).toLowerCase()}:${ip}`
           if (isBlocked(key)) return null
 
           const org = await unscopedPrisma.organization.findUnique({

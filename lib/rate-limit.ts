@@ -1,3 +1,4 @@
+import { headers } from "next/headers"
 const fails = new Map<string, { count: number; resetAt: number }>()
 const MAX = 5
 const WINDOW_MS = 15 * 60 * 1000
@@ -37,4 +38,11 @@ export function allowCall(key: string, max: number, windowMs: number) {
   recent.push(now)
   hits.set(key, recent)
   return true
+}
+// On Railway the proxy adds the real client address at the END of x-forwarded-for
+export async function clientIp(): Promise<string> {
+  const h = await headers()
+  const xff = h.get("x-forwarded-for")
+  if (xff) return xff.split(",").map((s) => s.trim()).filter(Boolean).pop() ?? "unknown"
+  return h.get("x-real-ip") ?? "unknown"
 }

@@ -2,7 +2,7 @@
 
 import { unscopedPrisma } from "@/lib/prisma"
 import { compare } from "bcryptjs"
-import { isBlocked, recordFailure, clearFailures } from "@/lib/rate-limit"
+import { isBlocked, recordFailure, clearFailures, clientIp } from "@/lib/rate-limit"
 
 export type WorkspaceMatch = { slug: string; name: string; email: string }
 
@@ -14,7 +14,8 @@ export async function findWorkspaces(
   const cleanEmail = (email ?? "").trim()
   if (!cleanEmail || !password) return []
 
-  const key = `login:${cleanEmail.toLowerCase()}`
+    const ip = await clientIp()
+  const key = `login:${cleanEmail.toLowerCase()}:${ip}`
   if (isBlocked(key)) return []
 
   const users = await unscopedPrisma.user.findMany({
