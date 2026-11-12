@@ -26,7 +26,8 @@ const isUniqueError = (e: unknown) => (e as { code?: string })?.code === "P2002"
 
 export async function POST(req: Request) {
   try {
-    const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown"
+        const xff = req.headers.get("x-forwarded-for")
+    const ip = xff ? xff.split(",").map((s) => s.trim()).filter(Boolean).pop() ?? "unknown" : "unknown"
     if (!allowCall(`signup:${ip}`, 10, 60 * 60 * 1000)) {
       return NextResponse.json({ error: "Too many attempts. Try again later." }, { status: 429 })
     }
