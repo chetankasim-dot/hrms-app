@@ -176,6 +176,15 @@ export async function executeImport(
   let skipped = 0
   const errors: string[] = []
 
+    const orgRow = await unscopedPrisma.organization.findUnique({
+    where: { id: orgId },
+    select: { maxSeats: true },
+  })
+  const activeCount = await unscopedPrisma.employee.count({
+    where: { orgId, status: { not: "SEPARATED" } },
+  })
+  let seatsLeft = (orgRow?.maxSeats ?? 50) - activeCount
+
   const [departments, existingUsers, existingEmployees, leaveTypes] = await Promise.all([
     unscopedPrisma.department.findMany({ where: { orgId } }),
     unscopedPrisma.user.findMany({ where: { orgId }, select: { email: true } }),
@@ -197,6 +206,11 @@ export async function executeImport(
 
     if (!mapped.email || !EMAIL_RE.test(mapped.email)) { skipped++; continue }
     if (usedEmails.has(mapped.email)) { skipped++; continue }
+        if (seatsLeft <= 0) {
+      errors.push(`${mapped.email}: seat limit reached for this plan`)
+      skipped++
+      continue
+    }
 
     try {
       let departmentId: string | undefined
@@ -271,6 +285,7 @@ export async function executeImport(
 
       usedEmails.add(mapped.email)
       usedCodes.add(empCode)
+            seatsLeft--
       imported++
     } catch {
       errors.push(`${mapped.email}: could not be imported`)
