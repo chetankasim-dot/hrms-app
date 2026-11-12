@@ -6,6 +6,8 @@ import { compare } from "bcryptjs"
 import type { Role } from "@prisma/client"
 import { isBlocked, recordFailure, clearFailures } from "@/lib/rate-limit"
 
+const DUMMY_HASH = "$2a$12$CwTycUXWue0Thq9StjUM0uJ8.7n0m0c5Y2hQ6Fz3sQ7xK9w1bq5aS"
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
   adapter: PrismaAdapter(unscopedPrisma),
@@ -37,10 +39,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
                 },
               })
             : null
-          const valid =
-            !!user?.passwordHash &&
-            user.isActive &&
-            (await compare(credentials.password as string, user.passwordHash))
+                    const hashToCheck = user?.passwordHash ?? DUMMY_HASH
+          const matches = await compare(credentials.password as string, hashToCheck)
+          const valid = !!user?.passwordHash && user.isActive && matches
           if (!valid || !user) {
             recordFailure(key)
             return null
