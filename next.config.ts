@@ -23,7 +23,7 @@ const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
-  // Report-only: logs problems in the browser console, blocks nothing yet
+    // Enforced: blocks anything the policy does not allow
     { key: "Content-Security-Policy", value: csp },
 ]
 
