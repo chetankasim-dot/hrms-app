@@ -198,19 +198,24 @@ export type ApprovalRow = {
 }
 
 export async function getApprovalRows(orgSlug: string, viewer: Viewer, type?: string) {
-    const org = await requireOrg(orgSlug, viewer, ["SUPER_ADMIN", "HR_ADMIN", "HR_MANAGER", "MANAGER"])
+      const actor = await requireActor(orgSlug, ["SUPER_ADMIN", "HR_ADMIN", "HR_MANAGER", "MANAGER"])
+  const org = await prisma.organization.findUnique({ where: { id: actor.orgId } })
+  if (!org) throw new Error("Not found")
+  // A plain manager only sees requests from their direct reports
+  const approvalScope =
+    actor.role === "MANAGER" ? { employee: { managerId: actor.employeeId ?? "none" } } : {}
   const today = todayUTC()
   const year = today.getUTCFullYear()
 
   const [leaves, sheets] = await Promise.all([
     prisma.leaveRequest.findMany({
-      where: { orgId: org.id, status: "PENDING" },
+            where: { orgId: org.id, status: "PENDING", ...approvalScope },
       include: { employee: true, leaveType: { select: { name: true } } },
       orderBy: { createdAt: "asc" },
       take: 50,
     }),
     prisma.timesheet.findMany({
-      where: { orgId: org.id, status: SUBMITTED },
+            where: { orgId: org.id, status: SUBMITTED, ...approvalScope },
       include: { employee: true },
       orderBy: { createdAt: "asc" },
       take: 50,
