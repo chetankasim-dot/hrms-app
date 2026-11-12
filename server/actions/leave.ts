@@ -9,6 +9,16 @@ const APPROVER_ROLES: Role[] = ["SUPER_ADMIN", "HR_ADMIN", "HR_MANAGER", "MANAGE
 const HR_ROLES: Role[] = ["SUPER_ADMIN", "HR_ADMIN", "HR_MANAGER"]
 const DAY = 86400000
 
+// Postgres can reject one of two simultaneous writes (P2034). Try once more.
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (e) {
+    if ((e as { code?: string })?.code === "P2034") return await fn()
+    throw e
+  }
+}
+
 // Midnight UTC of the given date
 function parseDate(s: string): Date | null {
   const d = new Date(s)
@@ -85,7 +95,7 @@ export async function applyLeave(data: {
   const employeeId = actor.employeeId
   const year = from.getUTCFullYear()
 
-  await unscopedPrisma.$transaction(
+  await withRetry(() => unscopedPrisma.$transaction(
     async (tx) => {
       const balance = await tx.leaveBalance.findFirst({
         where: { orgId: actor.orgId, employeeId, leaveTypeId: leaveType.id, year },
@@ -124,7 +134,7 @@ export async function applyLeave(data: {
       })
     },
     { isolationLevel: "Serializable" }
-  )
+  ))
 
   revalidatePath("/" + actor.orgSlug + "/leave")
   return { success: true, days }
@@ -133,7 +143,7 @@ export async function applyLeave(data: {
 export async function approveLeave(data: { requestId: string; orgId?: string; orgSlug: string }) {
   const actor = await requireActor(data.orgSlug, APPROVER_ROLES)
 
-  await unscopedPrisma.$transaction(async (tx) => {
+  await withRetry(() => unscopedPrisma.$transaction(async (tx) => {
     const req = await tx.leaveRequest.findFirst({
       where: { id: data.requestId, orgId: actor.orgId, status: "PENDING" },
       include: { employee: { select: { managerId: true } } },
@@ -151,7 +161,7 @@ export async function approveLeave(data: { requestId: string; orgId?: string; or
     if (res.count === 0) throw new Error("Request not found or already handled")
 
     await settleBalance(tx, req, true)
-  })
+  }))
 
   revalidatePath("/" + actor.orgSlug + "/leave")
   return { success: true }
@@ -160,7 +170,7 @@ export async function approveLeave(data: { requestId: string; orgId?: string; or
 export async function rejectLeave(data: { requestId: string; reason: string; orgId?: string; orgSlug: string }) {
   const actor = await requireActor(data.orgSlug, APPROVER_ROLES)
 
-  await unscopedPrisma.$transaction(async (tx) => {
+  await withRetry(() => unscopedPrisma.$transaction(async (tx) => {
     const req = await tx.leaveRequest.findFirst({
       where: { id: data.requestId, orgId: actor.orgId, status: "PENDING" },
       include: { employee: { select: { managerId: true } } },
@@ -182,7 +192,7 @@ export async function rejectLeave(data: { requestId: string; reason: string; org
     if (res.count === 0) throw new Error("Request not found or already handled")
 
     await settleBalance(tx, req, false)
-  })
+  }))
 
   revalidatePath("/" + actor.orgSlug + "/leave")
   return { success: true }
@@ -191,7 +201,7 @@ export async function rejectLeave(data: { requestId: string; reason: string; org
 export async function cancelLeave(data: { requestId: string; orgId?: string; orgSlug: string }) {
   const actor = await requireActor(data.orgSlug)
 
-  await unscopedPrisma.$transaction(async (tx) => {
+  await withRetry(() => unscopedPrisma.$transaction(async (tx) => {
     const req = await tx.leaveRequest.findFirst({
       where: { id: data.requestId, orgId: actor.orgId, status: "PENDING" },
     })
@@ -207,7 +217,7 @@ export async function cancelLeave(data: { requestId: string; orgId?: string; org
     if (res.count === 0) throw new Error("Only pending requests can be cancelled")
 
     await settleBalance(tx, req, false)
-  })
+  }))
 
   revalidatePath("/" + actor.orgSlug + "/leave")
   return { success: true }
