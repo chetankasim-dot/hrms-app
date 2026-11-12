@@ -255,23 +255,30 @@ export async function executeTool(
     }
 
     case "get_leave_balances": {
-            if (!isStaff) return { error: "Not allowed for your role" }
+                  // Staff may look up anyone. Employees may only look up themselves.
+      let selfOnly = false
+      if (!isStaff) {
+        if (!viewerUserId) return { error: "Not allowed for your role" }
+        selfOnly = true
+      }
       const { employeeName, employeeEmail } = input as {
         employeeName?: string
         employeeEmail?: string
       }
       const employee = await unscopedPrisma.employee.findFirst({
-        where: {
-          orgId,
-          OR: [
-            ...(employeeName
-              ? [{ firstName: { contains: employeeName.split(" ")[0], mode: "insensitive" as const } }]
-              : []),
-            ...(employeeEmail
-              ? [{ user: { email: { contains: employeeEmail, mode: "insensitive" as const } } }]
-              : []),
-          ],
-        },
+                where: selfOnly
+          ? { orgId, userId: viewerUserId }
+          : {
+              orgId,
+              OR: [
+                ...(employeeName
+                  ? [{ firstName: { contains: employeeName.split(" ")[0], mode: "insensitive" as const } }]
+                  : []),
+                ...(employeeEmail
+                  ? [{ user: { email: { contains: employeeEmail, mode: "insensitive" as const } } }]
+                  : []),
+              ],
+            },
         include: {
           leaveBalances: {
             include: { leaveType: { select: { name: true, code: true } } },
