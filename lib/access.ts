@@ -1,3 +1,4 @@
+import { cache } from "react"
 import { auth } from "@/lib/auth"
 import { unscopedPrisma } from "@/lib/prisma"
 import type { Role } from "@prisma/client"
@@ -11,12 +12,8 @@ export type Actor = {
 }
 
 // Checks the signed-in user against the database on every call.
-export async function requireActor(orgSlug?: string, roles?: Role[]): Promise<Actor> {
-  const session = await auth()
-  const id = session?.user?.id
-  if (!id) throw new Error("Not signed in")
-
-  const user = await unscopedPrisma.user.findUnique({
+async function loadUser(id: string) {
+  return unscopedPrisma.user.findUnique({
     where: { id },
     select: {
       id: true,
@@ -27,6 +24,16 @@ export async function requireActor(orgSlug?: string, roles?: Role[]): Promise<Ac
       employee: { select: { id: true } },
     },
   })
+}
+
+const loadUserCached = cache(loadUser)
+
+export async function requireActor(orgSlug?: string, roles?: Role[]): Promise<Actor> {
+  const session = await auth()
+  const id = session?.user?.id
+  if (!id) throw new Error("Not signed in")
+
+    const user = await loadUserCached(id)
   if (!user || !user.isActive || !user.orgId || !user.org) throw new Error("Not allowed")
   if (orgSlug && user.org.slug !== orgSlug) throw new Error("Not found")
   if (roles && !roles.includes(user.role)) throw new Error("Not allowed")
