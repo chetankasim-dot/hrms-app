@@ -109,7 +109,7 @@ export function ImportWizard({ orgId, orgSlug }: Props) {
     <div className="max-w-3xl space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Import employees</h1>
-        <p className="text-gray-500 text-sm mt-1">Upload your GreytHR CSV and we'll map everything automatically</p>
+        <p className="text-gray-500 text-sm mt-1">Upload your GreytHR CSV and we&apos;ll map everything automatically</p>
       </div>
 
       {/* Step indicator */}

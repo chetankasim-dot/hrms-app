@@ -30,10 +30,10 @@ const TOOL_LABELS: Record<string, string> = {
   get_departments: "Loading departments",
   get_recent_joiners: "Finding recent joiners",
   get_leave_balances: "Checking leave balances",
-    get_leave_schedule: "Checking leave schedule",
+  get_leave_schedule: "Checking leave schedule",
 }
 
-export function AgentHome({ orgName, orgSlug, orgId, userName, greeting, firstName }: Props) {
+export function AgentHome({ orgName, orgSlug, greeting, firstName }: Props) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState("")
   const [isStreaming, setIsStreaming] = useState(false)
@@ -46,7 +46,7 @@ export function AgentHome({ orgName, orgSlug, orgId, userName, greeting, firstNa
     { icon: <Users className="h-4 w-4" />, text: "How many employees do we have and what departments?" },
     { icon: <Search className="h-4 w-4" />, text: "Show me everyone in the HR team" },
     { icon: <BarChart2 className="h-4 w-4" />, text: "Who joined in the last 6 months?" },
-    { icon: <Calendar className="h-4 w-4" />, text: "What is the leave balance for Chetan Kasim?" },
+    { icon: <Calendar className="h-4 w-4" />, text: "Who is on leave today?" },
   ]
 
   useEffect(() => {
@@ -83,51 +83,70 @@ export function AgentHome({ orgName, orgSlug, orgId, userName, greeting, firstNa
     setActiveToolName(null)
 
     const history = messages.map((m) => ({ role: m.role, content: m.content }))
-    abortRef.current = new AbortController()
+    const controller = new AbortController()
+    abortRef.current = controller
 
     try {
       const res = await fetch("/api/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text, orgSlug, history }),
-        signal: abortRef.current.signal,
+        signal: controller.signal,
       })
 
-      if (!res.ok) throw new Error("HTTP " + res.status)
+      if (!res.ok || !res.body) throw new Error("HTTP " + res.status)
 
-      const reader = res.body!.getReader()
+      const reader = res.body.getReader()
       const decoder = new TextDecoder()
-      let fullText = ""
-      const toolsUsed: string[] = []
+      let buffer = ""
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        const lines = decoder.decode(value).split("\n")
-        for (const line of lines) {
+        buffer += decoder.decode(value, { stream: true })
+
+        // Events end with a blank line. Keep any half-received event for the next chunk.
+        const parts = buffer.split("\n\n")
+        buffer = parts.pop() ?? ""
+
+        for (const part of parts) {
+          const line = part.trim()
           if (!line.startsWith("data: ")) continue
           try {
             const event = JSON.parse(line.slice(6))
             if (event.type === "text") {
-              fullText += event.text
+              const chunk: string = event.text
               setMessages((prev) =>
-                prev.map((m) => m.id === assistantMsg.id ? { ...m, content: fullText } : m)
+                prev.map((m) =>
+                  m.id === assistantMsg.id ? { ...m, content: m.content + chunk } : m
+                )
               )
             } else if (event.type === "tool_start") {
-              setActiveToolName(event.toolName)
-              if (!toolsUsed.includes(event.toolName)) toolsUsed.push(event.toolName)
+              const name: string = event.toolName
+              setActiveToolName(name)
               setMessages((prev) =>
-                prev.map((m) => m.id === assistantMsg.id ? { ...m, toolsUsed: [...toolsUsed] } : m)
+                prev.map((m) =>
+                  m.id === assistantMsg.id && !(m.toolsUsed ?? []).includes(name)
+                    ? { ...m, toolsUsed: [...(m.toolsUsed ?? []), name] }
+                    : m
+                )
               )
             } else if (event.type === "tool_done") {
               setActiveToolName(null)
+            } else if (event.type === "error") {
+              const msg: string = event.message ?? "The assistant could not complete that request."
+              setMessages((prev) =>
+                prev.map((m) => (m.id === assistantMsg.id ? { ...m, content: msg } : m))
+              )
             }
-          } catch { }
+          } catch {
+            // ignore malformed events
+          }
         }
       }
 
       setMessages((prev) =>
-        prev.map((m) => m.id === assistantMsg.id ? { ...m, streaming: false, toolsUsed } : m)
+        prev.map((m) => (m.id === assistantMsg.id ? { ...m, streaming: false } : m))
       )
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
@@ -165,7 +184,7 @@ export function AgentHome({ orgName, orgSlug, orgId, userName, greeting, firstNa
             {greeting}, {firstName}
           </h1>
           <p className="text-gray-500 text-center mb-10">
-            Ask me anything about {orgName}'s people and HR data
+            Ask me anything about {orgName}&apos;s people and HR data
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-2xl">
             {SUGGESTIONS.map((s) => (
@@ -235,7 +254,9 @@ export function AgentHome({ orgName, orgSlug, orgId, userName, greeting, firstNa
                       <p className="whitespace-pre-wrap">{msg.content}</p>
                     ) : (
                       <div className="prose prose-sm max-w-none prose-headings:font-semibold prose-p:leading-relaxed [&_table]:w-full [&_table]:border-collapse [&_table]:text-sm [&_thead]:bg-gray-50 [&_th]:border [&_th]:border-gray-200 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_th]:text-xs [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-gray-500 [&_td]:border [&_td]:border-gray-200 [&_td]:px-3 [&_td]:py-2 [&_tr:hover]:bg-gray-50">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: () => null }}>{msg.content}</ReactMarkdown>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: () => null }}>
+                          {msg.content}
+                        </ReactMarkdown>
                       </div>
                     )
                   )}
