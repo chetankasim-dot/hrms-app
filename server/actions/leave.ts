@@ -94,6 +94,28 @@ export async function applyLeave(data: {
 
   const employeeId = actor.employeeId
   const year = from.getUTCFullYear()
+    // Create this year's balances the first time they are needed (for example January leave booked in December)
+  const hasBalances = await unscopedPrisma.leaveBalance.count({
+    where: { orgId: actor.orgId, employeeId, year },
+  })
+  if (hasBalances === 0) {
+    const types = await unscopedPrisma.leaveType.findMany({ where: { orgId: actor.orgId } })
+    if (types.length > 0) {
+      await unscopedPrisma.leaveBalance.createMany({
+        data: types.map((lt) => ({
+          orgId: actor.orgId,
+          employeeId,
+          leaveTypeId: lt.id,
+          year,
+          allocated: lt.daysAllowed,
+          used: 0,
+          pending: 0,
+          carried: 0,
+        })),
+        skipDuplicates: true,
+      })
+    }
+  }
 
   await withRetry(() => unscopedPrisma.$transaction(
     async (tx) => {
