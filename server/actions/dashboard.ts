@@ -2,13 +2,20 @@
 
 import { unscopedPrisma } from "@/lib/prisma"
 import { requireActor } from "@/lib/access"
+import { notifyEmployee } from "@/lib/notify"
 import { revalidatePath } from "next/cache"
 import type { Role } from "@prisma/client"
 
 const APPROVER_ROLES: Role[] = ["SUPER_ADMIN", "HR_ADMIN", "HR_MANAGER", "MANAGER"]
 
+const shortDate = (d: Date) =>
+  d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" })
+
+type Notice = { employeeId: string; title: string; body: string; type: string; link: string }
+
 export async function approveItem(kind: "Leave" | "Timesheet", id: string, orgSlug: string) {
   const actor = await requireActor(orgSlug, APPROVER_ROLES)
+  const out: { notice?: Notice } = {}
 
   await unscopedPrisma.$transaction(async (tx) => {
     if (kind === "Leave") {
@@ -44,6 +51,14 @@ export async function approveItem(kind: "Leave" | "Timesheet", id: string, orgSl
           },
         })
       }
+
+      out.notice = {
+        employeeId: req.employeeId,
+        title: "Leave approved",
+        body: `Your leave of ${req.days} day${req.days === 1 ? "" : "s"} from ${shortDate(req.fromDate)} was approved.`,
+        type: "leave",
+        link: `/${orgSlug}/leave`,
+      }
     } else {
       const sheet = await tx.timesheet.findFirst({
         where: { id, orgId: actor.orgId, status: "submitted" },
@@ -60,8 +75,18 @@ export async function approveItem(kind: "Leave" | "Timesheet", id: string, orgSl
         data: { status: "approved" },
       })
       if (res.count === 0) throw new Error("Timesheet not found or already handled")
+
+      out.notice = {
+        employeeId: sheet.employeeId,
+        title: "Timesheet approved",
+        body: `Your timesheet for the week of ${shortDate(sheet.weekStart)} was approved.`,
+        type: "timesheet",
+        link: `/${orgSlug}/timesheets`,
+      }
     }
   })
+
+  if (out.notice) await notifyEmployee({ orgId: actor.orgId, ...out.notice })
 
   revalidatePath(`/${orgSlug}/people`, "layout")
 }

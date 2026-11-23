@@ -2,6 +2,7 @@
 
 import { unscopedPrisma } from "@/lib/prisma"
 import { requireActor } from "@/lib/access"
+import { notifyEmployee } from "@/lib/notify"
 import { revalidatePath } from "next/cache"
 import type { Prisma, Role } from "@prisma/client"
 
@@ -18,6 +19,9 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
     throw e
   }
 }
+
+const shortDate = (d: Date) =>
+  d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" })
 
 // Midnight UTC of the given date
 function parseDate(s: string): Date | null {
@@ -94,7 +98,8 @@ export async function applyLeave(data: {
 
   const employeeId = actor.employeeId
   const year = from.getUTCFullYear()
-    // Create this year's balances the first time they are needed (for example January leave booked in December)
+
+  // Create this year's balances the first time they are needed (for example January leave booked in December)
   const hasBalances = await unscopedPrisma.leaveBalance.count({
     where: { orgId: actor.orgId, employeeId, year },
   })
@@ -164,6 +169,7 @@ export async function applyLeave(data: {
 
 export async function approveLeave(data: { requestId: string; orgId?: string; orgSlug: string }) {
   const actor = await requireActor(data.orgSlug, APPROVER_ROLES)
+  const out: { employeeId?: string; days?: number; from?: Date } = {}
 
   await withRetry(() => unscopedPrisma.$transaction(async (tx) => {
     const req = await tx.leaveRequest.findFirst({
@@ -183,7 +189,21 @@ export async function approveLeave(data: { requestId: string; orgId?: string; or
     if (res.count === 0) throw new Error("Request not found or already handled")
 
     await settleBalance(tx, req, true)
+    out.employeeId = req.employeeId
+    out.days = req.days
+    out.from = req.fromDate
   }))
+
+  if (out.employeeId && out.days !== undefined && out.from) {
+    await notifyEmployee({
+      orgId: actor.orgId,
+      employeeId: out.employeeId,
+      title: "Leave approved",
+      body: `Your leave of ${out.days} day${out.days === 1 ? "" : "s"} from ${shortDate(out.from)} was approved.`,
+      type: "leave",
+      link: `/${actor.orgSlug}/leave`,
+    })
+  }
 
   revalidatePath("/" + actor.orgSlug + "/leave")
   return { success: true }
@@ -191,6 +211,8 @@ export async function approveLeave(data: { requestId: string; orgId?: string; or
 
 export async function rejectLeave(data: { requestId: string; reason: string; orgId?: string; orgSlug: string }) {
   const actor = await requireActor(data.orgSlug, APPROVER_ROLES)
+  const out: { employeeId?: string; days?: number; from?: Date } = {}
+  const reason = (data.reason ?? "").slice(0, 500)
 
   await withRetry(() => unscopedPrisma.$transaction(async (tx) => {
     const req = await tx.leaveRequest.findFirst({
@@ -207,14 +229,28 @@ export async function rejectLeave(data: { requestId: string; reason: string; org
       where: { id: req.id, orgId: actor.orgId, status: "PENDING" },
       data: {
         status: "REJECTED",
-        rejectionNote: (data.reason ?? "").slice(0, 500),
+        rejectionNote: reason,
         approverId: actor.employeeId,
       },
     })
     if (res.count === 0) throw new Error("Request not found or already handled")
 
     await settleBalance(tx, req, false)
+    out.employeeId = req.employeeId
+    out.days = req.days
+    out.from = req.fromDate
   }))
+
+  if (out.employeeId && out.days !== undefined && out.from) {
+    await notifyEmployee({
+      orgId: actor.orgId,
+      employeeId: out.employeeId,
+      title: "Leave rejected",
+      body: `Your leave of ${out.days} day${out.days === 1 ? "" : "s"} from ${shortDate(out.from)} was rejected.${reason ? " Reason: " + reason : ""}`,
+      type: "leave",
+      link: `/${actor.orgSlug}/leave`,
+    })
+  }
 
   revalidatePath("/" + actor.orgSlug + "/leave")
   return { success: true }
