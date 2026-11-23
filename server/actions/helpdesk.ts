@@ -6,7 +6,7 @@ import { allowCall } from "@/lib/rate-limit"
 import { revalidatePath } from "next/cache"
 import type { Role, TicketStatus } from "@prisma/client"
 
-export const TICKET_CATEGORIES = ["IT", "HR", "Finance", "Letter request", "Expense claim", "Other"]
+const TICKET_CATEGORIES = ["IT", "HR", "Finance", "Letter request", "Expense claim", "Other"]
 const HR_ROLES: Role[] = ["SUPER_ADMIN", "HR_ADMIN", "HR_MANAGER"]
 const STATUSES: TicketStatus[] = ["OPEN", "IN_PROGRESS", "ON_HOLD", "RESOLVED", "CLOSED"]
 
