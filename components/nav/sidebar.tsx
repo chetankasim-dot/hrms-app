@@ -6,14 +6,14 @@ import {
   LayoutDashboard, Bot, Users, UserPlus, ClipboardList, DoorOpen,
   CalendarOff, Timer, Clock, TrendingUp, DollarSign, GraduationCap,
   Heart, Headphones, BarChart2, FileText, Shield, Settings, CreditCard,
-  Upload, ChevronRight, User, Lock,
+  Upload, ChevronRight, User, Lock, Bell,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   LayoutDashboard, Bot, Users, UserPlus, ClipboardList, DoorOpen,
   CalendarOff, Timer, Clock, TrendingUp, DollarSign, GraduationCap,
-  Heart, Headphones, BarChart2, FileText, Shield, Settings, CreditCard, Upload, User, Lock,
+  Heart, Headphones, BarChart2, FileText, Shield, Settings, CreditCard, Upload, User, Lock, Bell,
 }
 
 const ALL = ["SUPER_ADMIN", "HR_ADMIN", "HR_MANAGER", "MANAGER", "EMPLOYEE"]
@@ -35,6 +35,7 @@ const NAV: { section: string; items: Item[] }[] = [
     items: [
       { label: "Home", href: "", icon: "LayoutDashboard", roles: ALL },
       { label: "My profile", href: "/me", icon: "User", roles: ALL },
+      { label: "Notifications", href: "/notifications", icon: "Bell", roles: ALL },
     ],
   },
   {
@@ -95,9 +96,10 @@ type Props = {
   userName: string
   userEmail: string
   role: string
+  unread?: number
 }
 
-export function Sidebar({ orgSlug, orgName, plan, userName, role }: Props) {
+export function Sidebar({ orgSlug, orgName, plan, userName, role, unread = 0 }: Props) {
   const pathname = usePathname()
 
   const planColors: Record<string, string> = {
@@ -152,6 +154,7 @@ export function Sidebar({ orgSlug, orgName, plan, userName, role }: Props) {
                 ? pathname === `/${orgSlug}`
                 : pathname.startsWith(base)
               const Icon = ICON_MAP[item.icon]
+              const showBadge = item.label === "Notifications" && unread > 0
               return (
                 <Link key={item.label} href={href}>
                   <div className={cn(
@@ -162,7 +165,12 @@ export function Sidebar({ orgSlug, orgName, plan, userName, role }: Props) {
                   )}>
                     {Icon && <Icon className="h-4 w-4 flex-shrink-0" />}
                     <span>{item.label}</span>
-                    {isActive && <ChevronRight className="h-3 w-3 ml-auto opacity-60" />}
+                    {showBadge && (
+                      <span className="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full bg-teal-600 px-1 text-[10px] font-semibold text-white">
+                        {unread > 9 ? "9+" : unread}
+                      </span>
+                    )}
+                    {isActive && !showBadge && <ChevronRight className="h-3 w-3 ml-auto opacity-60" />}
                   </div>
                 </Link>
               )

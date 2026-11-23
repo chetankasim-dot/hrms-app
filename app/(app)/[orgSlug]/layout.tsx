@@ -24,7 +24,7 @@ export default async function AppLayout({
   }
   if (!actor) redirect("/login")
 
-  const [org, user] = await Promise.all([
+  const [org, user, unread] = await Promise.all([
     unscopedPrisma.organization.findUnique({
       where: { id: actor.orgId },
       select: { name: true, plan: true },
@@ -32,6 +32,9 @@ export default async function AppLayout({
     unscopedPrisma.user.findUnique({
       where: { id: actor.userId },
       select: { name: true, email: true },
+    }),
+    unscopedPrisma.notification.count({
+      where: { userId: actor.userId, orgId: actor.orgId, isRead: false },
     }),
   ])
   if (!org) notFound()
@@ -45,6 +48,7 @@ export default async function AppLayout({
         userName={user?.name ?? user?.email ?? "User"}
         userEmail={user?.email ?? ""}
         role={actor.role}
+        unread={unread}
       />
       <Topbar orgSlug={orgSlug} orgName={org.name} />
       <main className="pl-56 pt-12">
