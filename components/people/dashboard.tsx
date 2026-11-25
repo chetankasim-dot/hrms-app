@@ -10,15 +10,21 @@ import { approveItem } from "@/server/actions/dashboard"
 
 /* ---------- Tabs (used by people/layout.tsx) ---------- */
 
-export function PeopleTabs({ orgSlug }: { orgSlug: string }) {
+export function PeopleTabs({ orgSlug, canManage }: { orgSlug: string; canManage: boolean }) {
   const pathname = usePathname()
   const base = `/${orgSlug}/people`
-  const tabs = [
-    { label: "Dashboard", href: base },
-    { label: "Directory", href: `${base}/directory` },
-    { label: "Approvals", href: `${base}/approvals` },
-    { label: "Reports", href: `${base}/reports` },
+  const all = [
+    { label: "Dashboard", href: base, manage: true },
+    { label: "Directory", href: `${base}/directory`, manage: false },
+    { label: "Org chart", href: `${base}/org-chart`, manage: false },
+    { label: "Approvals", href: `${base}/approvals`, manage: true },
+    { label: "Reports", href: `${base}/reports`, manage: true },
   ]
+  const tabs = all.filter((t) => canManage || !t.manage)
+
+  // Profile pages (/people/<id>) do not show the tab bar
+  if (!all.some((t) => t.href === pathname)) return null
+
   return (
     <div className="flex gap-6 border-b">
       {tabs.map((t) => {
@@ -346,7 +352,9 @@ function AskHrAi({ orgSlug }: { orgSlug: string }) {
       {status && <div className="mt-2 text-gray-500">{status}</div>}
       {answer && (
         <div className="prose prose-sm mt-2 max-h-64 max-w-none overflow-y-auto text-gray-800 [&_table]:w-full [&_table]:text-xs [&_td]:border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:px-2 [&_th]:py-1 [&_th]:text-left">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: () => null }}>{answer}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: () => null }}>
+            {answer}
+          </ReactMarkdown>
         </div>
       )}
     </div>
