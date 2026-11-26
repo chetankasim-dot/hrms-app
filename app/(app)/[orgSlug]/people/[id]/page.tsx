@@ -2,7 +2,7 @@ import { notFound } from "next/navigation"
 import { requireActor } from "@/lib/access"
 import { unscopedPrisma } from "@/lib/prisma"
 import Link from "next/link"
-import { ArrowLeft, Mail, Phone, Building2, Calendar, User, Award, MapPin, Briefcase } from "lucide-react"
+import { ArrowLeft, Mail, Phone, Building2, Calendar, User, Award, MapPin, Briefcase, Clock, Globe, Layers, Lock } from "lucide-react"
 import { format } from "date-fns"
 import { cn } from "@/lib/utils"
 import { InviteButton } from "@/components/people/invite-button"
@@ -27,6 +27,32 @@ const STATUS_CLS: Record<string, string> = {
   AUTO_APPROVED: "bg-emerald-100 text-emerald-700",
   REJECTED: "bg-red-100 text-red-700",
   CANCELLED: "bg-gray-100 text-gray-500",
+}
+
+type IconType = React.ComponentType<{ className?: string }>
+
+function Row({ icon: Icon, label, value }: { icon: IconType; label: string; value?: string | null }) {
+  if (!value) return null
+  return (
+    <div className="flex items-center gap-3">
+      <div className="h-8 w-8 rounded-lg bg-gray-50 flex items-center justify-center flex-shrink-0">
+        <Icon className="h-4 w-4 text-gray-400" />
+      </div>
+      <div className="min-w-0">
+        <p className="text-[10px] text-gray-400 uppercase tracking-wider">{label}</p>
+        <p className="text-sm font-medium break-words">{value}</p>
+      </div>
+    </div>
+  )
+}
+
+function Card({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+      <h2 className="font-semibold text-sm uppercase tracking-wider text-gray-400">{title}</h2>
+      {children}
+    </div>
+  )
 }
 
 export default async function EmployeeProfilePage({
@@ -62,10 +88,12 @@ export default async function EmployeeProfilePage({
   })
   if (!employee) notFound()
 
+  const isHr = HR_ROLES.includes(actor.role)
   const isSelf = !!actor.employeeId && actor.employeeId === employee.id
   const isTheirManager = !!actor.employeeId && employee.managerId === actor.employeeId
-  const canSeePrivate = HR_ROLES.includes(actor.role) || isSelf || isTheirManager
-  const canInvite = HR_ROLES.includes(actor.role) && !isSelf
+  const canSeePrivate = isHr || isSelf || isTheirManager
+  const canSeePersonal = isHr || isSelf // personal email, marital status, date of birth
+  const canInvite = isHr && !isSelf
 
   // Numbers for the stat cards, only loaded when the viewer may see them
   const now = new Date()
@@ -110,17 +138,7 @@ export default async function EmployeeProfilePage({
     EL: "bg-emerald-50 text-emerald-700 border-emerald-100",
   }
 
-  const Row = ({ icon: Icon, label, value }: { icon: React.ComponentType<{ className?: string }>; label: string; value: string }) => (
-    <div className="flex items-center gap-3">
-      <div className="h-8 w-8 rounded-lg bg-gray-50 flex items-center justify-center flex-shrink-0">
-        <Icon className="h-4 w-4 text-gray-400" />
-      </div>
-      <div>
-        <p className="text-[10px] text-gray-400 uppercase tracking-wider">{label}</p>
-        <p className="text-sm font-medium">{value}</p>
-      </div>
-    </div>
-  )
+  const fmtDate = (d: Date | null) => (d ? format(new Date(d), "dd MMMM yyyy") : null)
 
   return (
     <div className="max-w-4xl space-y-5">
@@ -151,11 +169,19 @@ export default async function EmployeeProfilePage({
                 {employee.status.replace("_", " ")}
               </span>
               <span className="text-xs px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 font-medium border border-blue-100">
-                {employee.employmentType.replace("_", " ")}
+                {employee.employeeTypeLabel ?? employee.employmentType.replace("_", " ")}
               </span>
+              {employee.employeeRole && (
+                <span className="text-xs px-2.5 py-1 rounded-full bg-violet-50 text-violet-700 font-medium border border-violet-100">
+                  {employee.employeeRole}
+                </span>
+              )}
             </div>
           </div>
         </div>
+        {employee.aboutMe && (
+          <p className="mt-4 border-t pt-4 text-sm text-gray-600 whitespace-pre-line">{employee.aboutMe}</p>
+        )}
       </div>
 
       {canSeePrivate && (
@@ -189,50 +215,73 @@ export default async function EmployeeProfilePage({
       )}
 
       <div className="grid md:grid-cols-2 gap-5">
-        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
-          <h2 className="font-semibold text-sm uppercase tracking-wider text-gray-400">Details</h2>
+        <Card title="Details">
           <div className="space-y-3">
             {canSeePrivate && <Row icon={Mail} label="Email" value={employee.user.email} />}
-            {canSeePrivate && employee.phone && <Row icon={Phone} label="Phone" value={employee.phone} />}
+            {canSeePrivate && <Row icon={Phone} label="Phone" value={employee.phone} />}
             <Row icon={Building2} label="Department" value={employee.department?.name ?? "-"} />
             <Row icon={MapPin} label="Location" value={employee.location?.name ?? "-"} />
-            <Row icon={Briefcase} label="Employment type" value={employee.employmentType.replace("_", " ")} />
-            <Row icon={Calendar} label="Joined" value={employee.joinDate ? format(new Date(employee.joinDate), "dd MMMM yyyy") : "-"} />
+            <Row icon={Briefcase} label="Employment type" value={employee.employeeTypeLabel ?? employee.employmentType.replace("_", " ")} />
+            <Row icon={Calendar} label="Joined" value={fmtDate(employee.joinDate) ?? "-"} />
             <Row icon={User} label="Reports to" value={employee.manager ? `${employee.manager.firstName} ${employee.manager.lastName}` : "No manager assigned"} />
-            {canSeePrivate && employee.grade && <Row icon={Award} label="Grade" value={employee.grade} />}
+            {canSeePrivate && <Row icon={Award} label="Level" value={employee.grade} />}
           </div>
-        </div>
+        </Card>
 
-        {canSeePrivate && (
-          <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
-            <h2 className="font-semibold text-sm uppercase tracking-wider text-gray-400">
-              Leave balances: {new Date().getFullYear()}
-            </h2>
-            {employee.leaveBalances.length === 0 ? (
-              <p className="text-sm text-gray-400">No leave balances yet. They are created when the person first opens Leave.</p>
-            ) : (
-              <div className="space-y-3">
-                {employee.leaveBalances.map((b) => {
-                  const remaining = b.allocated + b.carried - b.used
-                  const pct = b.allocated > 0 ? Math.round(((b.allocated - b.used) / b.allocated) * 100) : 0
-                  const colorClass = leaveColors[b.leaveType.code] ?? "bg-gray-50 text-gray-700 border-gray-100"
-                  return (
-                    <div key={b.id} className={cn("p-3 rounded-lg border", colorClass)}>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <p className="text-xs font-semibold">{b.leaveType.name}</p>
-                        <p className="text-xs font-bold">{remaining} / {b.allocated} days left</p>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-black/10 overflow-hidden">
-                        <div className="h-full rounded-full bg-current opacity-40" style={{ width: `${Math.max(pct, 0)}%` }} />
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
+        <Card title="Work">
+          <div className="space-y-3">
+            <Row icon={Building2} label="Company" value={employee.companyName} />
+            <Row icon={Globe} label="Work mode" value={employee.workMode} />
+            <Row icon={MapPin} label="Work location" value={employee.workLocation} />
+            <Row icon={Clock} label="Shift timings" value={employee.shiftTimings} />
+            <Row icon={Layers} label="Service line" value={employee.serviceLine} />
+            <Row icon={Globe} label="Service region" value={employee.serviceRegion} />
+            {!employee.companyName && !employee.workMode && !employee.workLocation && !employee.shiftTimings && !employee.serviceLine && !employee.serviceRegion && (
+              <p className="text-sm text-gray-400">No work details on file.</p>
             )}
           </div>
-        )}
+        </Card>
       </div>
+
+      {canSeePersonal && (
+        <Card title="Personal (visible to HR and the person only)">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Row icon={Mail} label="Personal email" value={employee.personalEmail} />
+            <Row icon={Calendar} label="Date of birth" value={fmtDate(employee.dateOfBirth)} />
+            <Row icon={Lock} label="Marital status" value={employee.maritalStatus} />
+            {!employee.personalEmail && !employee.dateOfBirth && !employee.maritalStatus && (
+              <p className="text-sm text-gray-400">No personal details on file.</p>
+            )}
+          </div>
+        </Card>
+      )}
+
+      {canSeePrivate && (
+        <Card title={`Leave balances: ${new Date().getFullYear()}`}>
+          {employee.leaveBalances.length === 0 ? (
+            <p className="text-sm text-gray-400">No leave balances yet. They are created when the person first opens Leave.</p>
+          ) : (
+            <div className="space-y-3">
+              {employee.leaveBalances.map((b) => {
+                const remaining = b.allocated + b.carried - b.used
+                const pct = b.allocated > 0 ? Math.round(((b.allocated - b.used) / b.allocated) * 100) : 0
+                const colorClass = leaveColors[b.leaveType.code] ?? "bg-gray-50 text-gray-700 border-gray-100"
+                return (
+                  <div key={b.id} className={cn("p-3 rounded-lg border", colorClass)}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <p className="text-xs font-semibold">{b.leaveType.name}</p>
+                      <p className="text-xs font-bold">{remaining} / {b.allocated} days left</p>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-black/10 overflow-hidden">
+                      <div className="h-full rounded-full bg-current opacity-40" style={{ width: `${Math.max(pct, 0)}%` }} />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </Card>
+      )}
 
       {canSeePrivate && (
         <div className="bg-white border border-gray-200 rounded-xl p-5">
