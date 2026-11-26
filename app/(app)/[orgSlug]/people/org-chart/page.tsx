@@ -2,6 +2,7 @@ import Link from "next/link"
 import { notFound } from "next/navigation"
 import { auth } from "@/lib/auth"
 import { getOrgChart, type OrgCard } from "@/server/employees-people"
+import { ScrollEnd } from "@/components/people/scroll-end"
 
 const DOT: Record<string, string> = {
   office: "bg-green-500",
@@ -11,34 +12,35 @@ const DOT: Record<string, string> = {
   exited: "bg-gray-400",
 }
 
-function Person({ p, href, selected, badge }: {
+function Person({ p, openHref, profileHref, selected }: {
   p: OrgCard
-  href: string
+  openHref: string
+  profileHref: string
   selected?: boolean
-  badge?: boolean
 }) {
+  const hasTeam = p.size > 0
   return (
-    <Link
-      href={href}
-      className={`flex items-center justify-between gap-3 rounded-xl border p-3 text-sm hover:border-teal-600 ${
-        selected ? "border-teal-600 bg-teal-50" : "bg-white"
+    <div
+      className={`flex items-center justify-between gap-2 rounded-xl border p-3 text-sm ${
+        selected ? "border-teal-600 bg-teal-50" : "bg-white hover:border-teal-600"
       }`}
     >
-      <div className="flex min-w-0 items-center gap-2">
-        {!badge && <span className={`h-2.5 w-2.5 flex-shrink-0 rounded-full ${DOT[p.status]}`} />}
+      <Link href={hasTeam ? openHref : profileHref} className="flex min-w-0 flex-1 items-center gap-2">
+        <span className={`h-2.5 w-2.5 flex-shrink-0 rounded-full ${DOT[p.status]}`} />
         <div className="min-w-0">
           <div className="truncate font-semibold">{p.name}</div>
           <div className="truncate text-gray-500">
             {p.designation}
-            {!badge && p.status === "leave" ? " · on leave" : ""}
-            {!badge && p.status === "pending" ? " · not in yet" : ""}
+            {p.status === "leave" ? " · on leave" : ""}
+            {p.status === "pending" ? " · not in yet" : ""}
           </div>
         </div>
+      </Link>
+      <div className="flex flex-shrink-0 flex-col items-end gap-1">
+        {hasTeam && <span className="rounded-md border bg-gray-100 px-2 py-0.5 text-xs">{p.size}</span>}
+        <Link href={profileHref} className="text-xs text-teal-700 underline">Profile</Link>
       </div>
-      {badge && (
-        <span className="rounded-md border bg-gray-100 px-2 py-0.5 text-xs">{p.size}</span>
-      )}
-    </Link>
+    </div>
   )
 }
 
@@ -47,7 +49,7 @@ export default async function OrgChartPage({
   searchParams,
 }: {
   params: Promise<{ orgSlug: string }>
-  searchParams: Promise<{ root?: string; team?: string }>
+  searchParams: Promise<{ root?: string; path?: string }>
 }) {
   const { orgSlug } = await params
   const sp = await searchParams
@@ -61,7 +63,7 @@ export default async function OrgChartPage({
   }
 
   const base = `/${orgSlug}/people/org-chart`
-  const MAX = 5
+  const MAX = 200
 
   return (
     <div className="space-y-4">
@@ -76,42 +78,35 @@ export default async function OrgChartPage({
       {!c.root ? (
         <div className="text-sm text-gray-500">No employees yet</div>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-3">
-          <div className="space-y-2">
-            <div className="text-xs uppercase tracking-wide text-gray-500">Top</div>
-            <Person p={c.root} href={`${base}?root=${c.root.id}`} selected badge />
-            <div className="text-sm text-gray-500">{c.root.size} people</div>
-          </div>
-
-          <div className="space-y-2">
-            <div className="text-xs uppercase tracking-wide text-gray-500">Direct reports</div>
-            {c.reports.map((r) => (
-              <Person
-                key={r.id}
-                p={r}
-                href={`${base}?root=${c.root!.id}&team=${r.id}`}
-                selected={r.id === c.team?.id}
-                badge
-              />
-            ))}
-            {c.reports.length === 0 && <div className="text-sm text-gray-500">No direct reports</div>}
-          </div>
-
-          <div className="space-y-2">
-            <div className="text-xs uppercase tracking-wide text-gray-500">
-              {c.team ? `${c.team.name}'s team` : "Team"}
-            </div>
-            {c.members.slice(0, MAX).map((m) => (
-              <Person key={m.id} p={m} href={`/${orgSlug}/people/${m.id}`} />
-            ))}
-            {c.members.length > MAX && (
-              <div className="rounded-xl border border-dashed p-3 text-center text-sm text-gray-500">
-                +{c.members.length - MAX} more in this team
+        <ScrollEnd dep={c.root.id + ":" + c.path.join(",")}>
+          {c.columns.map((col, ci) => (
+            <div key={ci} className="w-72 flex-shrink-0 space-y-2">
+              <div className="text-xs uppercase tracking-wide text-gray-500">{col.title}</div>
+              <div className="max-h-[65vh] space-y-2 overflow-y-auto pr-1">
+                {col.cards.slice(0, MAX).map((p) => (
+                  <Person
+                    key={p.id}
+                    p={p}
+                    openHref={
+                      ci === 0
+                        ? `${base}?root=${c.root!.id}`
+                        : `${base}?root=${c.root!.id}&path=${[...c.path.slice(0, ci - 1), p.id].join(",")}`
+                    }
+                    profileHref={`/${orgSlug}/people/${p.id}`}
+                    selected={p.id === col.selectedId}
+                  />
+                ))}
+                {col.cards.length > MAX && (
+                  <div className="rounded-xl border border-dashed p-3 text-center text-sm text-gray-500">
+                    +{col.cards.length - MAX} more. Use the Directory to find them.
+                  </div>
+                )}
+                {col.cards.length === 0 && <div className="text-sm text-gray-500">No direct reports</div>}
               </div>
-            )}
-            {c.members.length === 0 && <div className="text-sm text-gray-500">Select a manager with a team</div>}
-          </div>
-        </div>
+              {ci === 0 && <div className="text-sm text-gray-500">{c.root!.size} people</div>}
+            </div>
+          ))}
+        </ScrollEnd>
       )}
 
       {c.otherRoots.length > 0 && (

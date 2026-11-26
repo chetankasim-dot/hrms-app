@@ -371,10 +371,12 @@ export type OrgCard = {
   size: number
 }
 
+export type OrgColumn = { title: string; selectedId: string | null; cards: OrgCard[] }
+
 export async function getOrgChart(
   orgSlug: string,
   viewer: Viewer,
-  sel: { root?: string; team?: string }
+  sel: { root?: string; path?: string }
 ) {
   const org = await requireOrg(orgSlug, viewer)
   const today = todayUTC()
@@ -420,25 +422,63 @@ export async function getOrgChart(
 
   const roots = sorted(emps.filter((e) => !e.managerId || !byId.has(e.managerId)))
   const root = roots.find((r) => r.id === sel.root) ?? roots[0] ?? null
-  const reports = root ? sorted(kids.get(root.id) ?? []) : []
-  const team = reports.find((r) => r.id === sel.team) ?? reports.find((r) => r.size > 0) ?? null
-  const members = team ? sorted(kids.get(team.id) ?? []) : []
 
-  const onLeave = members.filter((m) => m.status === "leave")
-  const summary = team
-    ? onLeave.length > 0
-      ? `${onLeave.length} ${onLeave.length === 1 ? "person" : "people"} in ${team.name}'s team ${onLeave.length === 1 ? "is" : "are"} on leave today: ${onLeave.map((m) => m.name).join(", ")}.`
-      : `Nobody in ${team.name}'s team is on leave today.`
-    : root
-      ? `${root.name} has ${reports.length} direct report${reports.length === 1 ? "" : "s"}.`
-      : "No employees yet."
+  if (!root) {
+    return {
+      root: null,
+      columns: [] as OrgColumn[],
+      path: [] as string[],
+      summary: "No employees yet.",
+      otherRoots: [] as OrgCard[],
+    }
+  }
+
+  // The chosen chain of people, each one must report to the one before it
+  const wanted = (sel.path ?? "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 12)
+  const path: string[] = []
+  let parent = root.id
+  for (const id of wanted) {
+    const child = (kids.get(parent) ?? []).find((k) => k.id === id)
+    if (!child) break
+    path.push(id)
+    parent = id
+  }
+  // Nothing chosen yet: open the first manager who has a team
+  if (path.length === 0) {
+    const first = sorted(kids.get(root.id) ?? []).find((r) => r.size > 0)
+    if (first) path.push(first.id)
+  }
+
+  // One column for the top person, then one for every level of the chain
+  const columns: OrgColumn[] = [{ title: "Top", selectedId: root.id, cards: [root] }]
+  let current = root.id
+  let currentName = root.name
+  for (let i = 0; i <= path.length; i++) {
+    columns.push({
+      title: i === 0 ? "Direct reports" : `${currentName}'s team`,
+      selectedId: path[i] ?? null,
+      cards: sorted(kids.get(current) ?? []),
+    })
+    if (i < path.length) {
+      current = path[i]
+      currentName = fullName(byId.get(path[i])!)
+    }
+  }
+
+  const last = columns[columns.length - 1]
+  const onLeave = last.cards.filter((m) => m.status === "leave")
+  const summary =
+    path.length === 0
+      ? `${root.name} has ${last.cards.length} direct report${last.cards.length === 1 ? "" : "s"}.`
+      : onLeave.length > 0
+        ? `${onLeave.length} ${onLeave.length === 1 ? "person" : "people"} in ${currentName}'s team ${onLeave.length === 1 ? "is" : "are"} on leave today: ${onLeave.map((m) => m.name).join(", ")}.`
+        : `Nobody in ${currentName}'s team is on leave today.`
 
   return {
     root,
-    reports,
-    team,
-    members,
+    columns,
+    path,
     summary,
-    otherRoots: roots.filter((r) => r.id !== root?.id),
+    otherRoots: roots.filter((r) => r.id !== root.id),
   }
 }
