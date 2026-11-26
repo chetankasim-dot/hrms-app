@@ -220,6 +220,18 @@ model Employee {
   status         EmployeeStatus       @default(ACTIVE)
   joinDate       DateTime?
   exitDate       DateTime?
+    // From the Zoho People export
+  employeeTypeLabel String?
+  employeeRole      String?
+  companyName       String?
+  workMode          String?
+  workLocation      String?
+  shiftTimings      String?
+  serviceLine       String?
+  serviceRegion     String?
+  personalEmail     String?
+  maritalStatus     String?
+  aboutMe           String?
   createdAt      DateTime             @default(now())
   updatedAt      DateTime             @updatedAt
   attendance     AttendanceRecord[]
