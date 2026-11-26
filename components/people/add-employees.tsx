@@ -7,6 +7,9 @@ import { addEmployee, importEmployees, type BatchResult, type NewEmployee } from
 const EMPTY: NewEmployee = {
   firstName: "", lastName: "", email: "", designation: "", department: "", location: "",
   managerEmail: "", employmentType: "FULL_TIME", joinDate: "", dateOfBirth: "", phone: "",
+  employeeCode: "", gender: "", grade: "", employeeRole: "", companyName: "", workMode: "",
+  workLocation: "", shiftTimings: "", serviceLine: "", serviceRegion: "", personalEmail: "",
+  maritalStatus: "", aboutMe: "",
 }
 
 const TYPES = [
@@ -14,33 +17,45 @@ const TYPES = [
   ["INTERN", "Intern"], ["CONSULTANT", "Consultant"],
 ]
 
+// Column names are matched after removing spaces and punctuation, so
+// "Email ID", "email_id" and "EMAIL ID" are all the same.
 const HEADERS: Record<string, keyof NewEmployee> = {
-  firstname: "firstName", lastname: "lastName", email: "email", workemail: "email",
-  designation: "designation", jobtitle: "designation", role: "designation",
+  employeeid: "employeeCode", employeecode: "employeeCode", empid: "employeeCode", empcode: "employeeCode",
+  firstname: "firstName", lastname: "lastName",
+  email: "email", emailid: "email", workemail: "email", officialemail: "email",
+  title: "designation", designation: "designation", jobtitle: "designation",
   department: "department", location: "location",
-  manager: "managerEmail", manageremail: "managerEmail",
-  employmenttype: "employmentType", type: "employmentType",
-  joindate: "joinDate", dateofjoining: "joinDate",
-  dateofbirth: "dateOfBirth", dob: "dateOfBirth", birthday: "dateOfBirth",
+  reportingto: "managerEmail", manager: "managerEmail", manageremail: "managerEmail",
+  employeetype: "employmentType", type: "employmentType", employmenttype: "employmentType",
+  dateofjoining: "joinDate", joindate: "joinDate", joiningdate: "joinDate",
+  birthdate: "dateOfBirth", dateofbirth: "dateOfBirth", dob: "dateOfBirth", birthday: "dateOfBirth",
   phone: "phone", mobile: "phone",
+  gender: "gender", level: "grade", grade: "grade",
+  employeerole: "employeeRole", companyname: "companyName",
+  workfromhome: "workMode", worklocation: "workLocation", shifttimings: "shiftTimings",
+  serviceline: "serviceLine", serviceregion: "serviceRegion",
+  otheremail: "personalEmail", personalemail: "personalEmail",
+  maritalstatus: "maritalStatus", aboume: "aboutMe", aboutme: "aboutMe",
 }
 
 const REQUIRED: Record<string, string> = {
-  firstName: "First Name", lastName: "Last Name", email: "Email",
-  designation: "Designation", department: "Department", location: "Location",
-  managerEmail: "Manager Email", employmentType: "Employment Type",
-  joinDate: "Join Date", dateOfBirth: "Date of Birth", phone: "Phone",
+  firstName: "First Name", lastName: "Last Name", email: "Email ID",
+  designation: "Title", department: "Department", location: "Location", joinDate: "Date of joining",
 }
 
 const TEMPLATE =
-  "First Name,Last Name,Email,Designation,Department,Location,Manager Email,Employment Type,Join Date,Date of Birth,Phone\n" +
-  "Asha,Verma,asha.verma@example.com,Associate,Accounting,Head Office,mohammed.ismail@valenta.io,Full time,2026-11-02,1995-06-15,9999999999\n"
+  "EmployeeID,First Name,Last Name,Email ID,Location,Department,Title,Date of joining,Other Email,Reporting To,Birth Date,Employee Type,Gender,Level,Phone,Employee Role,Company Name,Work From Home,Work Location,Shift Timings,Service Line,Service Region,Marital Status,AbouMe\n" +
+  "9001,Asha,Verma,asha.verma@example.com,Bangalore,Accounting,Associate,09-Mar-2026,,,15-Jun-1995,Permanent,Female,Level 1,,Team member,Valenta AI Pvt Ltd,Hybrid,Bangalore,9:00 AM To 6:00 PM,,,,\n"
 
+const CHUNK = 100
 const inputCls = "w-full rounded-lg border bg-white px-3 py-2 text-sm"
 
 function cellText(v: unknown): string {
   if (v === null || v === undefined) return ""
-  if (v instanceof Date) return v.toISOString().slice(0, 10)
+  if (v instanceof Date) {
+    // Add 12 hours so the calendar day is right whichever time zone the date was read in
+    return new Date(v.getTime() + 12 * 3600000).toISOString().slice(0, 10)
+  }
   return String(v).trim()
 }
 
@@ -103,11 +118,12 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function AddForm({ orgSlug, departments, locations }: { orgSlug: string; departments: string[]; locations: string[] }) {
   const router = useRouter()
   const [form, setForm] = useState<NewEmployee>(EMPTY)
+  const [more, setMore] = useState(false)
   const [message, setMessage] = useState("")
   const [added, setAdded] = useState("")
   const [pending, start] = useTransition()
 
-  const set = (k: keyof NewEmployee) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+  const set = (k: keyof NewEmployee) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }))
 
   function submit(e: React.FormEvent) {
@@ -130,10 +146,10 @@ function AddForm({ orgSlug, departments, locations }: { orgSlug: string; departm
         <Field label="First name *"><input className={inputCls} value={form.firstName} onChange={set("firstName")} required /></Field>
         <Field label="Last name *"><input className={inputCls} value={form.lastName} onChange={set("lastName")} required /></Field>
         <Field label="Work email *"><input type="email" className={inputCls} value={form.email} onChange={set("email")} required /></Field>
-        <Field label="Phone *"><input type="tel" className={inputCls} value={form.phone} onChange={set("phone")} required /></Field>
+        <Field label="Employee ID (blank = automatic)"><input className={inputCls} value={form.employeeCode} onChange={set("employeeCode")} /></Field>
         <Field label="Designation *"><input className={inputCls} value={form.designation} onChange={set("designation")} required /></Field>
-        <Field label="Employment type *">
-          <select className={inputCls} value={form.employmentType} onChange={set("employmentType")} required>
+        <Field label="Employment type">
+          <select className={inputCls} value={form.employmentType} onChange={set("employmentType")}>
             {TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
         </Field>
@@ -143,12 +159,45 @@ function AddForm({ orgSlug, departments, locations }: { orgSlug: string; departm
         <Field label="Location *">
           <input className={inputCls} list="loc-list" value={form.location} onChange={set("location")} placeholder="Pick or type a new one" required />
         </Field>
-        <Field label="Manager's email *"><input type="email" className={inputCls} value={form.managerEmail} onChange={set("managerEmail")} required /></Field>
+        <Field label="Manager (email or employee ID)"><input className={inputCls} value={form.managerEmail} onChange={set("managerEmail")} /></Field>
         <Field label="Join date *"><input type="date" className={inputCls} value={form.joinDate} onChange={set("joinDate")} required /></Field>
-        <Field label="Date of birth *"><input type="date" className={inputCls} value={form.dateOfBirth} onChange={set("dateOfBirth")} required /></Field>
+        <Field label="Date of birth"><input type="date" className={inputCls} value={form.dateOfBirth} onChange={set("dateOfBirth")} /></Field>
+        <Field label="Phone"><input type="tel" className={inputCls} value={form.phone} onChange={set("phone")} /></Field>
       </div>
       <datalist id="dept-list">{departments.map((d) => <option key={d} value={d} />)}</datalist>
       <datalist id="loc-list">{locations.map((l) => <option key={l} value={l} />)}</datalist>
+
+      <button type="button" onClick={() => setMore((v) => !v)} className="text-sm text-teal-700 underline">
+        {more ? "Hide more details" : "More details"}
+      </button>
+
+      {more && (
+        <div className="grid gap-3 rounded-xl border bg-gray-50 p-4 sm:grid-cols-2">
+          <Field label="Gender">
+            <select className={inputCls} value={form.gender} onChange={set("gender")}>
+              <option value="">Not set</option>
+              <option>Male</option>
+              <option>Female</option>
+              <option>Other</option>
+            </select>
+          </Field>
+          <Field label="Level"><input className={inputCls} value={form.grade} onChange={set("grade")} /></Field>
+          <Field label="Employee role"><input className={inputCls} value={form.employeeRole} onChange={set("employeeRole")} placeholder="Team member, Team Lead..." /></Field>
+          <Field label="Company name"><input className={inputCls} value={form.companyName} onChange={set("companyName")} /></Field>
+          <Field label="Work from home"><input className={inputCls} value={form.workMode} onChange={set("workMode")} placeholder="Hybrid, Office, Remote" /></Field>
+          <Field label="Work location"><input className={inputCls} value={form.workLocation} onChange={set("workLocation")} /></Field>
+          <Field label="Shift timings"><input className={inputCls} value={form.shiftTimings} onChange={set("shiftTimings")} /></Field>
+          <Field label="Service line"><input className={inputCls} value={form.serviceLine} onChange={set("serviceLine")} /></Field>
+          <Field label="Service region"><input className={inputCls} value={form.serviceRegion} onChange={set("serviceRegion")} /></Field>
+          <Field label="Personal email"><input type="email" className={inputCls} value={form.personalEmail} onChange={set("personalEmail")} /></Field>
+          <Field label="Marital status"><input className={inputCls} value={form.maritalStatus} onChange={set("maritalStatus")} /></Field>
+          <div className="sm:col-span-2">
+            <Field label="About me">
+              <textarea className={inputCls} rows={3} maxLength={2000} value={form.aboutMe} onChange={set("aboutMe")} />
+            </Field>
+          </div>
+        </div>
+      )}
 
       {message && <div className="text-sm text-red-600">{message}</div>}
       {added && <div className="text-sm text-green-700">{added}. You can add another.</div>}
@@ -170,6 +219,7 @@ function ImportPanel({ orgSlug }: { orgSlug: string }) {
   const [report, setReport] = useState<BatchResult | null>(null)
   const [done, setDone] = useState(false)
   const [message, setMessage] = useState("")
+  const [progress, setProgress] = useState("")
   const [pending, start] = useTransition()
 
   function downloadTemplate() {
@@ -200,7 +250,7 @@ function ImportPanel({ orgSlug }: { orgSlug: string }) {
         return
       }
       if (parsed.rows.length === 0) { setMessage("No data rows found"); return }
-      if (parsed.rows.length > 500) { setMessage("Maximum 500 rows per file"); return }
+      if (parsed.rows.length > 500) { setMessage("Maximum 500 rows per file. Split the file and upload it in parts."); return }
       setRows(parsed.rows)
       start(async () => {
         setReport(await importEmployees(orgSlug, parsed.rows, true))
@@ -212,10 +262,22 @@ function ImportPanel({ orgSlug }: { orgSlug: string }) {
 
   function doImport() {
     start(async () => {
-      const res = await importEmployees(orgSlug, rows, false)
-      setReport(res)
+      let ok = 0
+      const errs: { row: number; message: string }[] = []
+      for (let s = 0; s < rows.length; s += CHUNK) {
+        setProgress(`Importing ${Math.min(s + CHUNK, rows.length)} of ${rows.length}...`)
+        const res = await importEmployees(orgSlug, rows.slice(s, s + CHUNK), false)
+        if (!res.ok) {
+          errs.push({ row: s + 2, message: res.message ?? "This batch failed. Run the import again to continue." })
+          break
+        }
+        ok += res.okRows
+        res.errors.forEach((e) => errs.push({ row: e.row + s, message: e.message }))
+      }
+      setProgress("")
+      setReport({ ok: true, okRows: ok, errors: errs })
       setDone(true)
-      if (res.okRows > 0) router.refresh()
+      if (ok > 0) router.refresh()
     })
   }
 
@@ -224,8 +286,9 @@ function ImportPanel({ orgSlug }: { orgSlug: string }) {
       <div className="rounded-lg bg-gray-50 p-3 text-gray-700">
         <div className="mb-1 font-medium">Columns (first row of the file)</div>
         <div>
-          All columns are required: First Name, Last Name, Email, Designation, Department, Location, Manager Email,
-          Employment Type, Join Date, Date of Birth, Phone. Dates are YYYY-MM-DD. New departments and locations are created automatically.
+          Required: First Name, Last Name, Email ID, Title, Department, Location, Date of joining. Everything else is optional:
+          EmployeeID, Reporting To (email or employee ID), Birth Date, Employee Type, Gender, Level, Phone, Other Email and the rest of the Zoho People columns.
+          Dates can be 2026-03-09 or 09-Mar-2026. New departments and locations are created automatically. The Employee Status column is ignored.
         </div>
         <button onClick={downloadTemplate} className="mt-2 text-teal-700 underline">Download template (CSV)</button>
       </div>
@@ -239,7 +302,7 @@ function ImportPanel({ orgSlug }: { orgSlug: string }) {
       />
 
       {message && <div className="text-red-600">{message}</div>}
-      {pending && !done && <div className="text-gray-500">Working...</div>}
+      {pending && !done && <div className="text-gray-500">{progress || "Working..."}</div>}
 
       {report && !report.ok && <div className="text-red-600">{report.message}</div>}
 
