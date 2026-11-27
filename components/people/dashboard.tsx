@@ -191,11 +191,8 @@ function ApprovalsInbox({
   function approve(a: DashboardData["approvals"][number]) {
     setError("")
     startTransition(async () => {
-      try {
-        await approveItem(a.kind, a.id, orgSlug)
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed")
-      }
+      const res = await approveItem(a.kind, a.id, orgSlug)
+      if (!res.ok) setError(res.message ?? "Failed")
     })
   }
 

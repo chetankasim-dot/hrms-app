@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useTransition } from "react"
-import { Calendar, CheckCircle, XCircle, Clock, Plus, ChevronRight, AlertTriangle } from "lucide-react"
+import { Calendar, CheckCircle, XCircle, Clock, Plus, AlertTriangle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { format } from "date-fns"
 import { applyLeave, approveLeave, rejectLeave, cancelLeave } from "@/server/actions/leave"
@@ -121,7 +121,7 @@ export function LeaveDashboard({
     ? selectedBalance.allocated + selectedBalance.carried - selectedBalance.used - selectedBalance.pending
     : 0
 
-    const requestedDays = (() => {
+  const requestedDays = (() => {
     if (!form.fromDate || !form.toDate) return 0
     const start = new Date(form.fromDate + "T00:00:00Z").getTime()
     const end = new Date(form.toDate + "T00:00:00Z").getTime()
@@ -137,61 +137,61 @@ export function LeaveDashboard({
   function showMessage(type: "success" | "error", msg: string) {
     if (type === "success") { setSuccess(msg); setError(null) }
     else { setError(msg); setSuccess(null) }
-    setTimeout(() => { setSuccess(null); setError(null) }, 4000)
+    setTimeout(() => { setSuccess(null); setError(null) }, 6000)
   }
 
   function handleApply(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
     startTransition(async () => {
-      try {
-        const result = await applyLeave({
-          employeeId, leaveTypeId: form.leaveTypeId,
-          fromDate: form.fromDate, toDate: form.toDate,
-          reason: form.reason, orgId, orgSlug,
-        })
-        showMessage("success", "Leave applied for " + result.days + " days. Pending approval.")
-        setForm((p) => ({ ...p, fromDate: "", toDate: "", reason: "" }))
-        setTab("history")
-      } catch (err) {
-        showMessage("error", err instanceof Error ? err.message : "Failed to apply")
+      const result = await applyLeave({
+        employeeId, leaveTypeId: form.leaveTypeId,
+        fromDate: form.fromDate, toDate: form.toDate,
+        reason: form.reason, orgId, orgSlug,
+      })
+      if (!result.ok) {
+        showMessage("error", result.message ?? "Failed to apply")
+        return
       }
+      showMessage("success", "Leave applied for " + (result.days ?? 0) + " days. Pending approval.")
+      setForm((p) => ({ ...p, fromDate: "", toDate: "", reason: "" }))
+      setTab("history")
     })
   }
 
   function handleApprove(requestId: string) {
     startTransition(async () => {
-      try {
-        await approveLeave({ requestId, orgId, orgSlug })
-        showMessage("success", "Leave approved")
-      } catch (err) {
-        showMessage("error", err instanceof Error ? err.message : "Failed to approve")
+      const result = await approveLeave({ requestId, orgId, orgSlug })
+      if (!result.ok) {
+        showMessage("error", result.message ?? "Failed to approve")
+        return
       }
+      showMessage("success", "Leave approved")
     })
   }
 
   function handleReject(requestId: string) {
     if (!rejectReason.trim()) { setError("Please enter a reason"); return }
     startTransition(async () => {
-      try {
-        await rejectLeave({ requestId, reason: rejectReason, orgId, orgSlug })
-        showMessage("success", "Leave rejected")
-        setRejectingId(null)
-        setRejectReason("")
-      } catch (err) {
-        showMessage("error", err instanceof Error ? err.message : "Failed to reject")
+      const result = await rejectLeave({ requestId, reason: rejectReason, orgId, orgSlug })
+      if (!result.ok) {
+        showMessage("error", result.message ?? "Failed to reject")
+        return
       }
+      showMessage("success", "Leave rejected")
+      setRejectingId(null)
+      setRejectReason("")
     })
   }
 
   function handleCancel(requestId: string) {
     startTransition(async () => {
-      try {
-        await cancelLeave({ requestId, orgId, orgSlug })
-        showMessage("success", "Leave request cancelled")
-      } catch (err) {
-        showMessage("error", err instanceof Error ? err.message : "Failed to cancel")
+      const result = await cancelLeave({ requestId, orgId, orgSlug })
+      if (!result.ok) {
+        showMessage("error", result.message ?? "Failed to cancel")
+        return
       }
+      showMessage("success", "Leave request cancelled")
     })
   }
 
@@ -471,7 +471,7 @@ export function LeaveDashboard({
                         <p className="text-sm font-semibold">
                           {req.employee.firstName} {req.employee.lastName}
                         </p>
-                                                <p className="text-[10px] text-gray-400">
+                        <p className="text-[10px] text-gray-400">
                           {req.employee.department?.name ?? "No department"}
                         </p>
                       </div>
