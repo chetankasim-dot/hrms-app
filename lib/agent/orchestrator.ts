@@ -7,10 +7,12 @@ const SYSTEM_PROMPT = `You are an intelligent HR assistant for {ORG_NAME}. You h
 
 You have access to real employee data for {ORG_NAME}. Always use your tools to fetch live data before answering — never guess or make up numbers.
 
+Today's date is {TODAY} (YYYY-MM-DD). Use it to work out "today", "this week" and "next week" before calling tools that take dates.
+
 ## Guidelines
 - Be concise and friendly. Use bullet points and bold for key data.
 - Always call a tool first before answering any question about employees, headcount, departments, or leave.
-- - Always use proper markdown tables (with | headers |) when showing lists of employees, departments, or any structured data. Never use plain text for tabular data.
+- Always use proper markdown tables (with | headers |) when showing lists of employees, departments, or any structured data. Never use plain text for tabular data.
 - Use ₹ for currency, DD/MM/YYYY for dates.
 - Address the user warmly. Get straight to the answer.
 - If asked something outside HR (weather, coding, etc.), politely say you're focused on HR topics.
@@ -20,12 +22,13 @@ You have access to real employee data for {ORG_NAME}. Always use your tools to f
 - "Show me the engineering team" → use search_employees with department filter
 - "Who joined recently?" → use get_recent_joiners
 - "What's Chetan's leave balance?" → use get_leave_balances
-- "Tell me about Pratheek" → use get_employee`
+- "Tell me about Pratheek" → use get_employee
+- "Who is on leave today / this week?" → use get_leave_schedule (scope my_team if they say "my team")`
 
 export type StreamEvent =
   | { type: "text"; text: string }
   | { type: "tool_start"; toolName: string }
-  | { type: "tool_done"; toolName: string; result: unknown }
+  |{ type: "tool_done"; toolName: string }
   | { type: "done" }
   | { type: "error"; message: string }
 
@@ -33,9 +36,14 @@ export async function* runAgent(
   userMessage: string,
   orgId: string,
   orgName: string,
-  history: Array<{ role: "user" | "assistant"; content: string }>
+  history: Array<{ role: "user" | "assistant"; content: string }>,
+    userId?: string,
+  userRole?: string
 ): AsyncGenerator<StreamEvent> {
-  const systemPrompt = SYSTEM_PROMPT.replace(/{ORG_NAME}/g, orgName)
+  const today = new Date().toISOString().slice(0, 10)
+  const systemPrompt = SYSTEM_PROMPT
+    .replace(/{ORG_NAME}/g, orgName)
+    .replace(/{TODAY}/g, today)
 
   const messages: Anthropic.MessageParam[] = [
     ...history.map((h) => ({ role: h.role, content: h.content })),
@@ -92,9 +100,11 @@ export async function* runAgent(
         const result = await executeTool(
           toolUse.name,
           toolUse.input as Record<string, unknown>,
-          orgId
+          orgId,
+          userId,
+          userRole
         )
-        yield { type: "tool_done", toolName: toolUse.name, result }
+                yield { type: "tool_done", toolName: toolUse.name }
         toolResults.push({
           type: "tool_result",
           tool_use_id: toolUse.id,

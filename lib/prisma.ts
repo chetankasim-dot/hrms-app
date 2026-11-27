@@ -22,6 +22,8 @@ const TENANT_MODELS = new Set([
   "agentMessage", "auditLog", "notification", "usageRecord",
 ])
 
+type LooseArgs = { data?: unknown; where?: Record<string, unknown> }
+
 function makePrismaClient() {
   const client = new PrismaClient({
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
@@ -35,25 +37,28 @@ function makePrismaClient() {
           if (!modelName || !TENANT_MODELS.has(modelName)) return query(args)
 
           const ctx = orgContext.getStore()
-          if (!ctx?.orgId) return query(args)
+                    if (!ctx?.orgId) throw new Error("No org context: use withOrg() or unscopedPrisma")
 
           const orgId = ctx.orgId
+          const a = args as LooseArgs
 
-          if (["create", "createMany"].includes(operation)) {
-            if (operation === "createMany" && args.data) {
-              args.data = (Array.isArray(args.data) ? args.data : [args.data])
-                .map((d: Record<string, unknown>) => ({ ...d, orgId }))
-            } else if (args.data) {
-              args.data = { ...args.data, orgId }
-            }
+          if (operation === "createMany" && a.data) {
+            a.data = (Array.isArray(a.data) ? a.data : [a.data]).map((d) => ({
+              ...(d as Record<string, unknown>),
+              orgId,
+            }))
+          } else if (operation === "create" && a.data) {
+            a.data = { ...(a.data as Record<string, unknown>), orgId }
           }
 
-          if (["findMany", "findFirst", "findUnique", "count", "aggregate",
-            "update", "updateMany", "delete", "deleteMany", "upsert"].includes(operation)) {
-            args.where = { ...args.where, orgId }
+          if (
+            ["findMany", "findFirst", "findUnique", "count", "aggregate",
+              "update", "updateMany", "delete", "deleteMany", "upsert"].includes(operation)
+          ) {
+            a.where = { ...(a.where ?? {}), orgId }
           }
 
-          return query(args)
+          return query(a as typeof args)
         },
       },
     },

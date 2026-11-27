@@ -44,7 +44,7 @@ type PendingRequest = {
   employee: {
     firstName: string
     lastName: string
-    user: { name: string | null; email: string }
+    user: { name: string | null }
     department: { name: string } | null
   }
 }
@@ -121,11 +121,18 @@ export function LeaveDashboard({
     ? selectedBalance.allocated + selectedBalance.carried - selectedBalance.used - selectedBalance.pending
     : 0
 
-  const requestedDays = form.fromDate && form.toDate
-    ? Math.max(0, Math.ceil(
-        (new Date(form.toDate).getTime() - new Date(form.fromDate).getTime()) / (1000 * 60 * 60 * 24)
-      ) + 1)
-    : 0
+    const requestedDays = (() => {
+    if (!form.fromDate || !form.toDate) return 0
+    const start = new Date(form.fromDate + "T00:00:00Z").getTime()
+    const end = new Date(form.toDate + "T00:00:00Z").getTime()
+    if (isNaN(start) || isNaN(end) || end < start) return 0
+    let n = 0
+    for (let t = start; t <= end; t += 86400000) {
+      const day = new Date(t).getUTCDay()
+      if (day !== 0 && day !== 6) n++
+    }
+    return n
+  })()
 
   function showMessage(type: "success" | "error", msg: string) {
     if (type === "success") { setSuccess(msg); setError(null) }
@@ -464,8 +471,8 @@ export function LeaveDashboard({
                         <p className="text-sm font-semibold">
                           {req.employee.firstName} {req.employee.lastName}
                         </p>
-                        <p className="text-[10px] text-gray-400">
-                          {req.employee.department?.name} · {req.employee.user.email}
+                                                <p className="text-[10px] text-gray-400">
+                          {req.employee.department?.name ?? "No department"}
                         </p>
                       </div>
                     </div>

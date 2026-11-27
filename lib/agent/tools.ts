@@ -70,13 +70,33 @@ export const AGENT_TOOLS: AgentTool[] = [
       required: [],
     },
   },
+  {
+    name: "get_leave_schedule",
+    description: "Get who is on approved leave on a date or within a date range. Use for 'who is on leave today', 'how many are on leave', 'who is off this week', 'who in my team is on leave'. Omit from/to for today. Use scope 'my_team' when the user says 'my team' or 'my reports'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        from: { type: "string", description: "Start date, YYYY-MM-DD. Defaults to today." },
+        to: { type: "string", description: "End date, YYYY-MM-DD. Defaults to the start date." },
+        scope: {
+          type: "string",
+          enum: ["all", "my_team"],
+          description: "'my_team' limits results to the current user's direct reports. Default 'all'.",
+        },
+      },
+      required: [],
+    },
+  },
 ]
 
 export async function executeTool(
   toolName: string,
   input: Record<string, unknown>,
-  orgId: string
+  orgId: string,
+  viewerUserId?: string,
+  viewerRole?: string
 ): Promise<unknown> {
+    const isStaff = !!viewerRole && viewerRole !== "EMPLOYEE"
   switch (toolName) {
 
     case "get_workforce_snapshot": {
@@ -136,11 +156,11 @@ export async function executeTool(
           department: { select: { name: true } },
           manager: { include: { user: { select: { name: true } } } },
         },
-        take: Number(limit),
+                take: Math.min(Math.max(Number(limit) || 10, 1), 25),
       })
       return employees.map((e) => ({
         name: `${e.firstName} ${e.lastName}`.trim(),
-        email: e.user.email,
+                email: isStaff ? e.user.email : undefined,
         code: e.employeeCode,
         designation: e.designation,
         department: e.department?.name,
@@ -152,6 +172,7 @@ export async function executeTool(
     }
 
     case "get_employee": {
+            if (!isStaff) return { error: "Not allowed for your role" }
       const { name, email } = input as { name?: string; email?: string }
       const employee = await unscopedPrisma.employee.findFirst({
         where: {
@@ -216,7 +237,7 @@ export async function executeTool(
         where: {
           orgId,
           status: "ACTIVE",
-          joinDate: { gte: subDays(new Date(), Number(days)) },
+                    joinDate: { gte: subDays(new Date(), Math.min(Math.max(Number(days) || 90, 1), 730)) },
         },
         include: {
           user: { select: { name: true, email: true } },
@@ -234,22 +255,30 @@ export async function executeTool(
     }
 
     case "get_leave_balances": {
+                  // Staff may look up anyone. Employees may only look up themselves.
+      let selfOnly = false
+      if (!isStaff) {
+        if (!viewerUserId) return { error: "Not allowed for your role" }
+        selfOnly = true
+      }
       const { employeeName, employeeEmail } = input as {
         employeeName?: string
         employeeEmail?: string
       }
       const employee = await unscopedPrisma.employee.findFirst({
-        where: {
-          orgId,
-          OR: [
-            ...(employeeName
-              ? [{ firstName: { contains: employeeName.split(" ")[0], mode: "insensitive" as const } }]
-              : []),
-            ...(employeeEmail
-              ? [{ user: { email: { contains: employeeEmail, mode: "insensitive" as const } } }]
-              : []),
-          ],
-        },
+                where: selfOnly
+          ? { orgId, userId: viewerUserId }
+          : {
+              orgId,
+              OR: [
+                ...(employeeName
+                  ? [{ firstName: { contains: employeeName.split(" ")[0], mode: "insensitive" as const } }]
+                  : []),
+                ...(employeeEmail
+                  ? [{ user: { email: { contains: employeeEmail, mode: "insensitive" as const } } }]
+                  : []),
+              ],
+            },
         include: {
           leaveBalances: {
             include: { leaveType: { select: { name: true, code: true } } },
@@ -267,6 +296,75 @@ export async function executeTool(
           allocated: b.allocated,
           used: b.used,
           remaining: b.allocated + b.carried - b.used,
+        })),
+      }
+    }
+
+    case "get_leave_schedule": {
+            if (!viewerRole || viewerRole === "EMPLOYEE") return { error: "Not allowed for your role" }
+      const { from, to, scope = "all" } = input as {
+        from?: string
+        to?: string
+        scope?: string
+      }
+
+      const now = new Date()
+      const todayUTC = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()))
+      const parse = (s?: string) => {
+        if (!s) return null
+        const d = new Date(`${s}T00:00:00Z`)
+        return isNaN(d.getTime()) ? null : d
+      }
+      const start = parse(from) ?? todayUTC
+      const end = parse(to) ?? start
+      if (end < start) return { error: "'to' date must not be before 'from' date" }
+
+      const employeeFilter: { managerId?: string } = {}
+      if (scope === "my_team") {
+        if (!viewerUserId) return { error: "Cannot tell who the current user is" }
+        const me = await unscopedPrisma.employee.findFirst({
+          where: { userId: viewerUserId, orgId },
+          select: { id: true },
+        })
+        if (!me) return { error: "The current user has no employee record, so no team was found" }
+        employeeFilter.managerId = me.id
+      }
+
+      const requests = await unscopedPrisma.leaveRequest.findMany({
+        where: {
+          orgId,
+          status: { in: ["APPROVED", "AUTO_APPROVED"] },
+          fromDate: { lte: end },
+          toDate: { gte: start },
+          employee: employeeFilter,
+        },
+        include: {
+          employee: {
+            select: {
+              firstName: true,
+              lastName: true,
+              department: { select: { name: true } },
+            },
+          },
+          leaveType: { select: { name: true } },
+        },
+        orderBy: { fromDate: "asc" },
+        take: 100,
+      })
+
+      const fmtUTC = (d: Date) => d.toISOString().slice(0, 10).split("-").reverse().join("/")
+      return {
+        from: fmtUTC(start),
+        to: fmtUTC(end),
+        scope,
+        employeesOnLeave: new Set(requests.map((r) => r.employeeId)).size,
+        leaves: requests.map((r) => ({
+          name: `${r.employee.firstName} ${r.employee.lastName}`.trim(),
+          department: r.employee.department?.name ?? null,
+          leaveType: r.leaveType.name,
+          fromDate: fmtUTC(r.fromDate),
+          toDate: fmtUTC(r.toDate),
+          days: r.days,
         })),
       }
     }

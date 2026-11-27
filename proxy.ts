@@ -6,7 +6,7 @@ const { auth } = NextAuth(authConfig)
 
 const PUBLIC_ROUTES = [
   "/", "/pricing", "/login", "/signup", "/invite",
-  "/api/auth", "/api/billing/webhook",
+  "/api/auth", "/api/billing/webhook", "/api/signup",
 ]
 
 export default auth((req) => {

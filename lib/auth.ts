@@ -4,6 +4,9 @@ import Credentials from "next-auth/providers/credentials"
 import { unscopedPrisma } from "@/lib/prisma"
 import { compare } from "bcryptjs"
 import type { Role } from "@prisma/client"
+import { isBlocked, recordFailure, clearFailures } from "@/lib/rate-limit"
+
+const DUMMY_HASH = "$2a$12$CwTycUXWue0Thq9StjUM0uJ8.7n0m0c5Y2hQ6Fz3sQ7xK9w1bq5aS"
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
@@ -17,40 +20,54 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         password: { label: "Password", type: "password" },
         orgSlug: { label: "Workspace", type: "text" },
       },
-      async authorize(credentials) {
+                  async authorize(credentials, request) {
         try {
-          if (!credentials?.email || !credentials?.password || !credentials?.orgSlug) {
-            return null
-          }
+          if (!credentials?.email || !credentials?.password || !credentials?.orgSlug) return null
+                    const xff = request?.headers?.get("x-forwarded-for")
+          const ip = xff ? xff.split(",").map((s) => s.trim()).filter(Boolean).pop() ?? "unknown" : "unknown"
+          const key = `login:${String(credentials.email).toLowerCase()}:${ip}`
+          if (isBlocked(key)) return null
+
           const org = await unscopedPrisma.organization.findUnique({
             where: { slug: credentials.orgSlug as string },
           })
-          console.log("AUTH: org lookup:", org?.id ?? "NOT FOUND")
-          if (!org) return null
+          const user = org
+            ? await unscopedPrisma.user.findFirst({
+                where: {
+                  orgId: org.id,
+                  email: { equals: credentials.email as string, mode: "insensitive" },
+                },
+              })
+            : null
+                    const hashToCheck = user?.passwordHash ?? DUMMY_HASH
+          const matches = await compare(credentials.password as string, hashToCheck)
+          const valid = !!user?.passwordHash && user.isActive && matches
+          if (!valid || !user) {
+            recordFailure(key)
+            return null
+          }
 
-          const user = await unscopedPrisma.user.findFirst({
-            where: { orgId: org.id, email: credentials.email as string },
-          })
-          console.log("AUTH: user lookup:", user?.id ?? "NOT FOUND")
-          if (!user?.passwordHash) return null
-
-          const valid = await compare(credentials.password as string, user.passwordHash)
-          console.log("AUTH: password valid:", valid)
-          if (!valid) return null
-
+          clearFailures(key)
           return user
-        } catch (error) {
-          console.error("AUTH ERROR:", error)
+        } catch {
           return null
         }
       },
     }),
   ],
   callbacks: {
-    async jwt({ token, user }) {
-      if (user) {
+        async jwt({ token, user }) {
+      const id = (user?.id ?? token.id ?? token.sub) as string | undefined
+      if (!id) return token
+
+      const now = Date.now()
+      const checkedAt = (token.checkedAt as number | undefined) ?? 0
+      const stale = now - checkedAt > 5 * 60 * 1000
+
+      // Re-read from the database at sign-in and then at most every 5 minutes
+      if (user || stale) {
         const dbUser = await unscopedPrisma.user.findUnique({
-          where: { id: user.id },
+          where: { id },
           select: { id: true, role: true, isActive: true, orgId: true },
         })
         if (dbUser) {
@@ -58,7 +75,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           token.role = dbUser.role
           token.isActive = dbUser.isActive
           token.orgId = dbUser.orgId
+        } else {
+          token.isActive = false // user was deleted
         }
+        token.checkedAt = now
       }
       return token
     },
@@ -81,10 +101,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       }
       return true
     },
-    async redirect({ url, baseUrl }) {
+        async redirect({ url, baseUrl }) {
       const base = process.env.NEXTAUTH_URL || process.env.AUTH_URL || baseUrl
-      if (url.startsWith("/")) return `${base}${url}`
-      if (url.startsWith(base)) return url
+      try {
+        const target = new URL(url, base)
+        // Only allow redirects that stay on our own site
+        if (target.origin === new URL(base).origin) return target.toString()
+      } catch {
+        // fall through to the safe default
+      }
       return base
     },
   },

@@ -1,9 +1,11 @@
 import { auth } from "@/lib/auth"
 import { redirect } from "next/navigation"
 import Link from "next/link"
+import { requirePageRole } from "@/lib/access"
 
 export default async function Page({ params }: { params: Promise<{ orgSlug: string }> }) {
   const { orgSlug } = await params
+    await requirePageRole(orgSlug, ["SUPER_ADMIN", "HR_ADMIN"])
   const session = await auth()
   if (!session?.user) redirect("/login")
   return (
@@ -12,6 +14,8 @@ export default async function Page({ params }: { params: Promise<{ orgSlug: stri
         <Link href={"/" + orgSlug} className="text-sm text-gray-500 hover:text-black">← Dashboard</Link>
         <span className="text-gray-300">/</span>
         <span className="text-sm font-medium capitalize">admin</span>
+        
+      
       </div>
       <div className="bg-white rounded-xl border p-12 text-center">
         <h1 className="text-2xl font-bold capitalize mb-2">admin</h1>
