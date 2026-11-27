@@ -1,4 +1,5 @@
 import { unscopedPrisma } from "@/lib/prisma"
+import type { Prisma } from "@prisma/client"
 import { subDays, format, startOfMonth } from "date-fns"
 
 export type AgentTool = {
@@ -11,6 +12,8 @@ export type AgentTool = {
   }
 }
 
+const HR_ROLES = ["SUPER_ADMIN", "HR_ADMIN", "HR_MANAGER"]
+
 export const AGENT_TOOLS: AgentTool[] = [
   {
     name: "get_workforce_snapshot",
@@ -19,7 +22,7 @@ export const AGENT_TOOLS: AgentTool[] = [
   },
   {
     name: "search_employees",
-    description: "Search employees by name, email, department, or designation. Returns a list with their details.",
+    description: "Search employees by name, email, department, or designation. Returns a list with their details. Email addresses are only shown for people the user is allowed to see.",
     input_schema: {
       type: "object",
       properties: {
@@ -32,7 +35,7 @@ export const AGENT_TOOLS: AgentTool[] = [
   },
   {
     name: "get_employee",
-    description: "Get full details for one specific employee — their role, department, manager, join date, leave balances.",
+    description: "Get details for one specific employee — their role, department, manager, join date. Email and leave balances are only included for HR, the person themselves, and their manager.",
     input_schema: {
       type: "object",
       properties: {
@@ -60,7 +63,7 @@ export const AGENT_TOOLS: AgentTool[] = [
   },
   {
     name: "get_leave_balances",
-    description: "Get leave balance for an employee — how many casual, sick, earned leave days they have left.",
+    description: "Get leave balance for an employee — how many casual, sick, earned leave days they have left. HR can look up anyone. Managers can look up themselves and their direct reports. Employees can only look up themselves. With no name given, it returns the current user's own balance.",
     input_schema: {
       type: "object",
       properties: {
@@ -89,6 +92,51 @@ export const AGENT_TOOLS: AgentTool[] = [
   },
 ]
 
+/* ---------- Who may see private details (email, leave balances) ---------- */
+
+type Access = { all: boolean; ids: Set<string>; selfId: string | null }
+
+async function loadAccess(orgId: string, viewerUserId?: string, viewerRole?: string): Promise<Access> {
+  const me = viewerUserId
+    ? await unscopedPrisma.employee.findFirst({
+        where: { userId: viewerUserId, orgId },
+        select: { id: true },
+      })
+    : null
+
+  // HR sees everyone
+  if (viewerRole && HR_ROLES.includes(viewerRole)) {
+    return { all: true, ids: new Set(), selfId: me?.id ?? null }
+  }
+  if (!me) return { all: false, ids: new Set(), selfId: null }
+
+  // Everyone else sees themselves, and managers also see their direct reports
+  const ids = new Set<string>([me.id])
+  if (viewerRole === "MANAGER") {
+    const reports = await unscopedPrisma.employee.findMany({
+      where: { orgId, managerId: me.id },
+      select: { id: true },
+    })
+    for (const r of reports) ids.add(r.id)
+  }
+  return { all: false, ids, selfId: me.id }
+}
+
+const canSee = (a: Access, employeeId: string) => a.all || a.ids.has(employeeId)
+
+// "Sonu Goyal": every word must match the first or the last name
+function nameWhere(name: string): Prisma.EmployeeWhereInput {
+  const words = name.trim().split(/\s+/).filter(Boolean).slice(0, 4)
+  return {
+    AND: words.map((w) => ({
+      OR: [
+        { firstName: { contains: w, mode: "insensitive" } },
+        { lastName: { contains: w, mode: "insensitive" } },
+      ],
+    })),
+  }
+}
+
 export async function executeTool(
   toolName: string,
   input: Record<string, unknown>,
@@ -96,7 +144,12 @@ export async function executeTool(
   viewerUserId?: string,
   viewerRole?: string
 ): Promise<unknown> {
-    const isStaff = !!viewerRole && viewerRole !== "EMPLOYEE"
+  const isStaff = !!viewerRole && viewerRole !== "EMPLOYEE"
+
+  // Worked out once, and only if a tool needs it
+  let accessCache: Access | null = null
+  const access = async () => (accessCache ??= await loadAccess(orgId, viewerUserId, viewerRole))
+
   switch (toolName) {
 
     case "get_workforce_snapshot": {
@@ -132,6 +185,7 @@ export async function executeTool(
         department?: string
         limit?: number
       }
+      const q = typeof query === "string" ? query.trim() : ""
       const employees = await unscopedPrisma.employee.findMany({
         where: {
           orgId,
@@ -139,14 +193,13 @@ export async function executeTool(
           ...(department
             ? { department: { name: { contains: department, mode: "insensitive" } } }
             : {}),
-          ...(query
+          ...(q
             ? {
                 OR: [
-                  { firstName: { contains: query, mode: "insensitive" } },
-                  { lastName: { contains: query, mode: "insensitive" } },
-                  { designation: { contains: query, mode: "insensitive" } },
-                  { employeeCode: { contains: query, mode: "insensitive" } },
-                  { user: { email: { contains: query, mode: "insensitive" } } },
+                  nameWhere(q),
+                  { designation: { contains: q, mode: "insensitive" } },
+                  { employeeCode: { contains: q, mode: "insensitive" } },
+                  { user: { email: { contains: q, mode: "insensitive" } } },
                 ],
               }
             : {}),
@@ -156,11 +209,13 @@ export async function executeTool(
           department: { select: { name: true } },
           manager: { include: { user: { select: { name: true } } } },
         },
-                take: Math.min(Math.max(Number(limit) || 10, 1), 25),
+        take: Math.min(Math.max(Number(limit) || 10, 1), 25),
       })
+      const a = isStaff ? await access() : null
       return employees.map((e) => ({
         name: `${e.firstName} ${e.lastName}`.trim(),
-                email: isStaff ? e.user.email : undefined,
+        // Email only for people this user may see
+        email: a && canSee(a, e.id) ? e.user.email : undefined,
         code: e.employeeCode,
         designation: e.designation,
         department: e.department?.name,
@@ -172,20 +227,17 @@ export async function executeTool(
     }
 
     case "get_employee": {
-            if (!isStaff) return { error: "Not allowed for your role" }
+      if (!isStaff) return { error: "Not allowed for your role" }
       const { name, email } = input as { name?: string; email?: string }
+
+      const OR: Prisma.EmployeeWhereInput[] = []
+      if (typeof name === "string" && name.trim()) OR.push(nameWhere(name))
+      if (typeof email === "string" && email.trim())
+        OR.push({ user: { email: { contains: email.trim(), mode: "insensitive" } } })
+      if (OR.length === 0) return { error: "Give a name or an email address" }
+
       const employee = await unscopedPrisma.employee.findFirst({
-        where: {
-          orgId,
-          OR: [
-            ...(name
-              ? [{ firstName: { contains: name.split(" ")[0], mode: "insensitive" as const } }]
-              : []),
-            ...(email
-              ? [{ user: { email: { contains: email, mode: "insensitive" as const } } }]
-              : []),
-          ],
-        },
+        where: { orgId, OR },
         include: {
           user: { select: { name: true, email: true } },
           department: { select: { name: true } },
@@ -196,9 +248,10 @@ export async function executeTool(
         },
       })
       if (!employee) return { error: "Employee not found" }
-      return {
+
+      const a = await access()
+      const base = {
         name: `${employee.firstName} ${employee.lastName}`.trim(),
-        email: employee.user.email,
         code: employee.employeeCode,
         designation: employee.designation,
         department: employee.department?.name,
@@ -206,6 +259,17 @@ export async function executeTool(
           ? `${employee.manager.firstName} ${employee.manager.lastName}`
           : "No manager assigned",
         joinDate: employee.joinDate ? format(employee.joinDate, "dd MMM yyyy") : null,
+      }
+
+      if (!canSee(a, employee.id)) {
+        return {
+          ...base,
+          note: "Email and leave balances are only available for yourself and your direct reports.",
+        }
+      }
+      return {
+        ...base,
+        email: employee.user.email,
         leaveBalances: employee.leaveBalances.map((b) => ({
           type: b.leaveType.name,
           allocated: b.allocated,
@@ -237,17 +301,20 @@ export async function executeTool(
         where: {
           orgId,
           status: "ACTIVE",
-                    joinDate: { gte: subDays(new Date(), Math.min(Math.max(Number(days) || 90, 1), 730)) },
+          joinDate: { gte: subDays(new Date(), Math.min(Math.max(Number(days) || 90, 1), 730)) },
         },
         include: {
           user: { select: { name: true, email: true } },
           department: { select: { name: true } },
         },
         orderBy: { joinDate: "desc" },
+        take: 100,
       })
+      const a = await access()
       return employees.map((e) => ({
         name: `${e.firstName} ${e.lastName}`.trim(),
-        email: e.user.email,
+        // Email only for people this user may see
+        email: canSee(a, e.id) ? e.user.email : undefined,
         designation: e.designation,
         department: e.department?.name,
         joinDate: e.joinDate ? format(e.joinDate, "dd MMM yyyy") : null,
@@ -255,30 +322,30 @@ export async function executeTool(
     }
 
     case "get_leave_balances": {
-                  // Staff may look up anyone. Employees may only look up themselves.
-      let selfOnly = false
-      if (!isStaff) {
-        if (!viewerUserId) return { error: "Not allowed for your role" }
-        selfOnly = true
-      }
+      if (!viewerUserId || !viewerRole) return { error: "Not allowed for your role" }
       const { employeeName, employeeEmail } = input as {
         employeeName?: string
         employeeEmail?: string
       }
+      const a = await access()
+
+      const OR: Prisma.EmployeeWhereInput[] = []
+      if (typeof employeeName === "string" && employeeName.trim()) OR.push(nameWhere(employeeName))
+      if (typeof employeeEmail === "string" && employeeEmail.trim())
+        OR.push({ user: { email: { contains: employeeEmail.trim(), mode: "insensitive" } } })
+
+      let where: Prisma.EmployeeWhereInput
+      if (viewerRole === "EMPLOYEE" || OR.length === 0) {
+        // Employees, and anyone who gave no name, get their own balance
+        if (!a.selfId) return { error: "No employee record found for your account" }
+        where = { id: a.selfId, orgId }
+      } else {
+        // HR searches everyone. A manager only searches themselves and their direct reports.
+        where = { orgId, OR, ...(a.all ? {} : { id: { in: [...a.ids] } }) }
+      }
+
       const employee = await unscopedPrisma.employee.findFirst({
-                where: selfOnly
-          ? { orgId, userId: viewerUserId }
-          : {
-              orgId,
-              OR: [
-                ...(employeeName
-                  ? [{ firstName: { contains: employeeName.split(" ")[0], mode: "insensitive" as const } }]
-                  : []),
-                ...(employeeEmail
-                  ? [{ user: { email: { contains: employeeEmail, mode: "insensitive" as const } } }]
-                  : []),
-              ],
-            },
+        where,
         include: {
           leaveBalances: {
             include: { leaveType: { select: { name: true, code: true } } },
@@ -286,7 +353,13 @@ export async function executeTool(
           },
         },
       })
-      if (!employee) return { error: "Employee not found" }
+      if (!employee) {
+        return {
+          error: a.all
+            ? "Employee not found"
+            : "Employee not found among you and your direct reports",
+        }
+      }
       return {
         employee: `${employee.firstName} ${employee.lastName}`.trim(),
         year: new Date().getFullYear(),
@@ -301,7 +374,7 @@ export async function executeTool(
     }
 
     case "get_leave_schedule": {
-            if (!viewerRole || viewerRole === "EMPLOYEE") return { error: "Not allowed for your role" }
+      if (!viewerRole || viewerRole === "EMPLOYEE") return { error: "Not allowed for your role" }
       const { from, to, scope = "all" } = input as {
         from?: string
         to?: string
