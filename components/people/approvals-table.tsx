@@ -33,7 +33,7 @@ export function ApprovalsTable({ rows, orgSlug }: { rows: ApprovalRow[]; orgSlug
       setSelected(new Set())
       setMessage(
         res.failed > 0
-          ? `${res.approved} approved, ${res.failed} failed (not allowed or already handled)`
+          ? `${res.approved} approved, ${res.failed} failed: ${res.firstError ?? "not allowed or already handled"}`
           : `${res.approved} approved`
       )
     })
