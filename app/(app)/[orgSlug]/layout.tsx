@@ -1,5 +1,5 @@
 import { redirect, notFound } from "next/navigation"
-import { requireActor, type Actor } from "@/lib/access"
+import { requireActor, isServiceError, type Actor } from "@/lib/access"
 import { unscopedPrisma } from "@/lib/prisma"
 import { Sidebar } from "@/components/nav/sidebar"
 import { Topbar } from "@/components/nav/topbar"
@@ -17,9 +17,11 @@ export default async function AppLayout({
   try {
     actor = await requireActor(orgSlug)
   } catch (e) {
-    // Signed out, disabled, or no workspace: go to login.
+    // A database or network failure is not the same as being signed out: show the error page
+    if (isServiceError(e)) throw e
     // Signed in but wrong workspace ("Not found"): show not found.
     if (e instanceof Error && e.message === "Not found") notFound()
+    // Signed out, or switched off: go to login.
     actor = null
   }
   if (!actor) redirect("/login")
